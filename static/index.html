@@ -5,81 +5,108 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>拓竹打印机监控</title>
 <style>
-  :root{--g:#00ae42;--bg:#f4f6f5;--card:#fff;--tx:#1c2420;--mut:#6b7a72;--bd:#e3e9e6;--red:#d4380d;--amber:#d48806}
+  :root{
+    --g:#00ae42;--g-d:#00963a;--bg:#eef2f0;--card:#fff;--tx:#1b231f;--mut:#6d7c74;
+    --bd:#e2e9e5;--bd2:#eef3f0;--red:#d4380d;--amber:#c47f0a;
+  }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%}
   body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--tx);font-size:13px;display:flex;flex-direction:column;overflow:hidden}
-  header{flex:0 0 auto;background:var(--card);border-bottom:1px solid var(--bd);padding:10px 18px;display:flex;align-items:center;justify-content:space-between}
-  header h1{font-size:15px;font-weight:600}
-  .tag{font-size:11px;color:var(--mut);border:1px solid var(--bd);border-radius:10px;padding:1px 8px;margin-left:8px;vertical-align:2px;font-weight:400}
-  header .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#bbb;margin-right:6px}
-  header .dot.on{background:var(--g)}header .dot.warn{background:var(--amber)}header .dot.off{background:var(--red)}
-  #st-online{font-size:12px;color:var(--mut);font-variant-numeric:tabular-nums}
-  main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.5fr) 360px 300px;grid-template-areas:"table cfg log";gap:14px;padding:12px 14px}
-  .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px 14px;min-height:0;display:flex;flex-direction:column}
+  header{flex:0 0 auto;background:var(--card);border-bottom:1px solid var(--bd);padding:12px 20px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 1px 2px rgba(20,30,25,.04)}
+  header h1{font-size:16px;font-weight:600;display:flex;align-items:center;gap:10px}
+  .tag{font-size:11px;color:var(--mut);border:1px solid var(--bd);border-radius:999px;padding:2px 9px;font-weight:400}
+  .chipstat{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--mut);background:#f5f8f6;border:1px solid var(--bd);border-radius:999px;padding:4px 12px;font-variant-numeric:tabular-nums}
+  .chipstat .dot{width:7px;height:7px;border-radius:50%;background:#b9c3bd}
+  .chipstat .dot.on{background:var(--g)}
+  .chipstat .dot.warn{background:var(--amber)}
+  .chipstat .dot.off{background:var(--red)}
+  main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 396px 320px;grid-template-areas:"table cfg log";gap:14px;padding:14px 16px}
+  .card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px 18px;min-height:0;display:flex;flex-direction:column;box-shadow:0 1px 2px rgba(20,30,25,.03)}
   #printer-card{grid-area:table}
   #config-card{grid-area:cfg;overflow-y:auto}
   #log-card{grid-area:log}
-  h2{font-size:12px;font-weight:600;color:var(--mut);margin:0 0 8px}
-  h2:not(:first-child){margin-top:14px}
-  label{display:block;font-size:11px;color:var(--mut);margin:6px 0 3px}
-  input[type=text],input[type=password]{width:100%;padding:6px 9px;border:1px solid var(--bd);border-radius:7px;font-size:12px;background:#fbfcfb;font-family:inherit}
-  input:focus{outline:none;border-color:var(--g)}
-  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-  .checks{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:2px}
-  .checks label{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--tx);margin:0}
-  .checks input[type=text]{width:44px;text-align:center;padding:3px}
-  .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
-  button{padding:7px 14px;border-radius:8px;border:1px solid var(--bd);background:#fff;font-size:12px;cursor:pointer;font-family:inherit;color:var(--tx)}
-  button.pri{background:var(--g);border-color:var(--g);color:#fff}
-  button.pri:hover{background:#00963a}
-  button:hover{border-color:#b9c6c0}
+  .card-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:4px}
+  .card-head h2{font-size:13px;font-weight:600;color:var(--tx)}
+  .card-head .meta{font-size:11px;color:var(--mut)}
+  .card-sub{font-size:11px;color:var(--mut);line-height:1.6;margin-bottom:10px}
+  .trace{font-size:11.5px;color:var(--mut);margin-top:2px}
+
+  .table-wrap{flex:1;min-height:0;overflow:auto;margin:0 -6px;padding:0 6px}
+  table{width:100%;min-width:840px;border-collapse:collapse;table-layout:fixed}
+  thead th{position:sticky;top:0;z-index:2;background:var(--card);text-align:left;font-size:11px;color:var(--mut);font-weight:500;padding:7px 6px;border-bottom:1px solid var(--bd);white-space:nowrap}
+  thead th:last-child{text-align:right}
+  tbody td{padding:4px 6px;border-bottom:1px solid var(--bd2);vertical-align:middle}
+  tbody tr:hover{background:#f8fbf9}
+  tbody td input{width:100%;padding:6px 8px;border:1px solid transparent;background:#f4f8f5;border-radius:7px;font-size:12px;font-family:inherit;color:var(--tx)}
+  tbody td input::placeholder{color:#a9b6ae}
+  tbody td input:hover{background:#eff4f1}
+  tbody td input:focus{outline:none;background:#fff;border-color:var(--g);box-shadow:0 0 0 3px rgba(0,174,66,.12)}
+  .c-st{width:118px}.c-prog{width:auto}.c-op{width:104px}
+  .chip{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;background:#f2f5f3;color:var(--mut);font-size:11px;font-weight:600;max-width:100%}
+  .chip em{width:6px;height:6px;border-radius:50%;background:#b9c3bd;flex:0 0 auto}
+  .chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chip.on{background:#e8f7ee;color:#0a7f36}.chip.on em{background:var(--g)}
+  .chip.run{background:#e1f6e9;color:#077a32}.chip.run em{background:var(--g);box-shadow:0 0 0 3px rgba(0,174,66,.16)}
+  .chip.warn{background:#fdf4e3;color:#8a5a00}.chip.warn em{background:var(--amber)}
+  .chip.pause{background:#fdf4e3;color:#8a5a00}.chip.pause em{background:var(--amber)}
+  .chip.fail{background:#fdecea;color:var(--red)}.chip.fail em{background:var(--red)}
+  .pbar{height:5px;background:#edf2ef;border-radius:999px;overflow:hidden}
+  .pbar>i{display:block;height:100%;width:0;background:var(--g);border-radius:999px;transition:width .4s}
+  .pmeta{font-size:11px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:4px;min-height:14px}
+  .ops{display:flex;gap:6px;justify-content:flex-end}
+  button{padding:8px 16px;border-radius:9px;border:1px solid var(--bd);background:#fff;font-size:12.5px;cursor:pointer;font-family:inherit;color:var(--tx);transition:background .15s,border-color .15s}
+  button:hover{border-color:#bfccc5;background:#fafcfb}
   button:disabled{opacity:.5;cursor:default}
-  .hint{font-size:11px;color:var(--mut);margin-top:8px;line-height:1.6}
-  .table-wrap{flex:1;min-height:0;overflow:auto}
-  table{width:100%;min-width:700px;border-collapse:collapse;table-layout:fixed;font-size:12px}
-  th{position:sticky;top:0;z-index:1;background:var(--card);text-align:left;font-size:11px;color:var(--mut);font-weight:500;padding:5px 4px;border-bottom:1px solid var(--bd)}
-  td{padding:3px 4px;border-bottom:1px solid #f1f5f3;vertical-align:middle}
-  tbody tr:hover{background:#fafcfb}
-  td input{padding:4px 6px;font-size:11px;border-radius:6px}
-  .c-st{width:190px}
-  .c-op{width:92px}
-  .st-line{display:flex;align-items:center;gap:5px;min-width:0}
-  .sdot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#c4ccc8;flex:0 0 auto}
-  .sdot.on,.sdot.run{background:var(--g)}
-  .sdot.run{box-shadow:0 0 0 3px rgba(0,174,66,.16)}
-  .sdot.warn{background:var(--amber)}
-  .sdot.fail{background:var(--red)}
-  .sdot.pause{background:var(--amber)}
-  .stext{font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .stext.run{color:var(--g)}.stext.fail{color:var(--red)}.stext.pause{color:var(--amber)}
-  .pbar{height:4px;background:#edf1ef;border-radius:4px;margin:4px 0 2px;overflow:hidden}
-  .pbar>i{display:block;height:100%;width:0;background:var(--g);transition:width .4s}
-  .pmeta{font-size:10px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .ops{display:flex;gap:4px}
-  button.mini{padding:3px 7px;font-size:11px;border-radius:6px;line-height:1.5}
+  button.pri{background:var(--g);border-color:var(--g);color:#fff}
+  button.pri:hover{background:var(--g-d)}
+  button.mini{padding:4px 11px;font-size:11.5px;border-radius:7px;white-space:nowrap}
   button.mini.start{background:var(--g);border-color:var(--g);color:#fff}
-  button.mini.start:hover{background:#00963a}
-  button.mini.stop{background:#fff6e8;border-color:#f0c27a;color:#8a5a00}
-  #log-card ul{list-style:none;flex:1;overflow-y:auto;min-height:0}
-  #log-card li{padding:5px 0;border-bottom:1px dashed var(--bd);font-size:12px;color:#3a453f;display:flex;gap:8px;align-items:baseline}
-  #log-card li .t{color:var(--mut);flex-shrink:0;font-variant-numeric:tabular-nums}
-  .empty{color:var(--mut);font-size:12px;padding:6px 0}
-  #toast{position:fixed;top:14px;left:50%;transform:translateX(-50%);background:#222c27;color:#fff;padding:8px 18px;border-radius:8px;font-size:12px;opacity:0;pointer-events:none;transition:opacity .25s;z-index:9;max-width:80vw}
+  button.mini.start:hover{background:var(--g-d)}
+  button.mini.stop{background:#fff;border-color:#edc07a;color:#8a5a00}
+  button.mini.stop:hover{background:#fffaf2}
+  button.mini.test{background:#fff;color:#42524a}
+
+  #config-card .sec{padding:15px 0;border-top:1px solid var(--bd2)}
+  #config-card .sec:first-child{padding-top:0;border-top:none}
+  .sec h2{font-size:13px;font-weight:600;margin-bottom:2px}
+  .sec .sub{font-size:11px;color:var(--mut);margin-bottom:11px}
+  label{display:block;font-size:11.5px;color:var(--mut);margin:10px 0 5px}
+  #config-card input[type=text],#config-card input[type=password]{width:100%;padding:8px 10px;border:1px solid var(--bd);border-radius:8px;font-size:12.5px;background:#f8fbf9;font-family:inherit}
+  #config-card input:focus{outline:none;background:#fff;border-color:var(--g);box-shadow:0 0 0 3px rgba(0,174,66,.1)}
+  .checks{display:grid;grid-template-columns:1fr 1fr;gap:8px 10px;margin-top:8px}
+  .checks label{display:flex;align-items:center;gap:7px;margin:0;font-size:12px;color:var(--tx);background:#f7faf8;border:1px solid var(--bd2);padding:7px 10px;border-radius:8px;cursor:pointer}
+  .checks label:hover{background:#f1f7f3;border-color:var(--bd)}
+  .checks input[type=checkbox]{width:14px;height:14px;accent-color:var(--g);flex:0 0 auto}
+  .checks .num{white-space:nowrap;gap:4px}
+  #config-card .checks .num input[type=text]{width:40px;text-align:center;padding:3px 4px;border-radius:6px;border:1px solid var(--bd);background:#fff;font-size:12px;margin:0 2px}
+  .checks .span2{grid-column:span 2}
+  .actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px}
+  .hint{font-size:11px;color:var(--mut);line-height:1.7;margin-top:10px;padding-top:10px;border-top:1px dashed var(--bd)}
+
+  #log-card ul{list-style:none;flex:1;overflow-y:auto;min-height:0;margin-top:6px}
+  #log-card li{padding:7px 0;border-bottom:1px dashed var(--bd);font-size:12px;color:#3c4a43;display:flex;gap:8px;align-items:baseline;line-height:1.5}
+  #log-card li .t{color:var(--mut);flex:0 0 58px;font-variant-numeric:tabular-nums;font-size:11px}
+  #log-card li .m{flex:0 0 auto;font-size:9px;line-height:1}
+  #log-card li .x{flex:1;min-width:0;word-break:break-word}
+  .empty{color:var(--mut);font-size:12px;padding:10px 0}
+
+  #toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#222c27;color:#fff;padding:9px 20px;border-radius:9px;font-size:12.5px;opacity:0;pointer-events:none;transition:opacity .25s;z-index:9;max-width:80vw;box-shadow:0 8px 24px rgba(0,0,0,.18)}
   #toast.err{background:var(--red)}
   #toast.ok{background:var(--g)}
-  #cam-pop{position:fixed;right:16px;bottom:16px;width:340px;max-width:80vw;background:var(--card);border:1px solid var(--bd);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.16);padding:8px;z-index:8;display:none}
-  #cam-pop .cap{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--mut);margin-bottom:6px}
-  #cam-pop img{width:100%;border-radius:6px;display:block}
-  @media (max-width:1400px){main{grid-template-columns:minmax(0,1fr) 340px 280px}}
+  #cam-pop{position:fixed;right:18px;bottom:18px;width:340px;max-width:80vw;background:var(--card);border:1px solid var(--bd);border-radius:12px;box-shadow:0 14px 40px rgba(0,0,0,.18);padding:10px;z-index:8;display:none}
+  #cam-pop .cap{display:flex;justify-content:space-between;align-items:center;font-size:11.5px;color:var(--mut);margin-bottom:8px}
+  #cam-pop img{width:100%;border-radius:8px;display:block}
+  #cam-close{padding:3px 9px;font-size:11px;border-radius:6px}
+
+  @media (max-width:1440px){main{grid-template-columns:minmax(0,1fr) 376px 300px}}
   @media (max-width:1180px){
     body{overflow:auto}
     main{height:auto;grid-template-columns:minmax(0,1fr) 300px;grid-template-areas:"table log" "cfg log"}
     #config-card{overflow:visible}
-    .table-wrap{max-height:60vh}
+    .table-wrap{max-height:58vh}
   }
   @media (max-width:860px){
-    main{grid-template-columns:1fr;grid-template-areas:"table" "cfg" "log"}
+    main{grid-template-columns:1fr;grid-template-areas:"table" "cfg" "log";padding:10px}
     #log-card ul{max-height:320px}
   }
 </style>
@@ -87,62 +114,77 @@
 <body>
 <header>
   <h1>拓竹打印机监控<span class="tag">webhook-p2s</span></h1>
-  <span><span class="dot" id="st-dot"></span><span id="st-online">加载中</span></span>
+  <span class="chipstat"><i class="dot" id="st-dot"></i><span id="st-online">加载中</span></span>
 </header>
 <main>
 
   <section class="card" id="printer-card">
-    <h2>打印机列表（共 20 个席位，使用哪个就填哪个；拓竹屏幕：设置 → 局域网模式，开启后获取访问码）</h2>
+    <div class="card-head">
+      <h2>打印机列表</h2>
+      <span class="meta">20 个设备席位 · 推送标题 = 设备名称 + 事件</span>
+    </div>
+    <div class="card-sub">填好 IP / 序列号 / 访问码后点「保存全部」，再点该行「启动」。拓竹屏幕：设置 → 局域网模式，开启后可查看访问码。</div>
     <div class="table-wrap">
       <table>
         <colgroup>
-          <col style="width:100px"><col style="width:122px"><col style="width:118px"><col style="width:96px"><col><col style="width:92px">
+          <col style="width:11%"><col style="width:14%"><col style="width:14%"><col style="width:11%">
+          <col style="width:12%"><col style="width:26%"><col style="width:12%">
         </colgroup>
         <thead>
-          <tr><th>设备名称</th><th>打印机 IP</th><th>序列号 SN</th><th>访问码</th><th>状态 / 进度</th><th>操作</th></tr>
+          <tr><th>设备名称</th><th>IP 地址</th><th>序列号 SN</th><th>访问码</th><th>状态</th><th>任务 / 进度</th><th>操作</th></tr>
         </thead>
         <tbody id="ptbody"></tbody>
       </table>
     </div>
-    <div class="hint">填好后点右侧“保存全部”，再点该行“启动”。推送消息标题自动带设备名称，例如「P2S_1 开始打印」。</div>
   </section>
 
   <section class="card" id="config-card">
-    <h2>钉钉群机器人（群设置 → 智能群助手 → 自定义机器人）</h2>
-    <label>Webhook 地址</label>
-    <input type="text" id="f-webhook" placeholder="https://oapi.dingtalk.com/robot/send?access_token=...">
-    <div class="row2">
-      <div><label>加签密钥 SEC（“加签”时填写）</label><input type="password" id="f-secret" placeholder="SEC..."></div>
-      <div><label>消息关键词（“自定义关键词”时填写）</label><input type="text" id="f-keyword" placeholder="如：打印"></div>
+    <div class="sec">
+      <h2>钉钉群机器人</h2>
+      <div class="sub">群设置 → 智能群助手 → 自定义机器人</div>
+      <label>Webhook 地址</label>
+      <input type="text" id="f-webhook" placeholder="https://oapi.dingtalk.com/robot/send?access_token=...">
+      <label>加签密钥 SEC（安全设置为“加签”时填写）</label>
+      <input type="password" id="f-secret" placeholder="SEC...">
+      <label>消息关键词（安全设置为“自定义关键词”时填写）</label>
+      <input type="text" id="f-keyword" placeholder="如：打印">
     </div>
-    <h2>摄像头画面（RTSP，需开启局域网模式；X1 全系支持，P1/A1 需较新固件）</h2>
-    <div class="checks">
-      <label><input type="checkbox" id="c-enabled"> 推送时附带画面</label>
-      <label><input type="checkbox" id="c-snap"> 内嵌快照图</label>
-      <label><input type="checkbox" id="c-clip"> 附带视频链接</label>
-      <label>视频 <input type="text" id="c-sec" value="5"> 秒（2–15）</label>
+
+    <div class="sec">
+      <h2>摄像头画面</h2>
+      <div class="sub">RTSP 直连，需开启局域网模式；X1 全系支持，P1 / A1 需较新固件</div>
+      <div class="checks">
+        <label><input type="checkbox" id="c-enabled"> 推送附带画面</label>
+        <label><input type="checkbox" id="c-snap"> 内嵌快照图</label>
+        <label><input type="checkbox" id="c-clip"> 附带视频链接</label>
+        <label class="num">视频 <input type="text" id="c-sec" value="5"> 秒（2–15）</label>
+      </div>
     </div>
-    <h2>通知规则</h2>
-    <div class="checks">
-      <label><input type="checkbox" id="n-enabled"> 总开关</label>
-      <label><input type="checkbox" id="n-start"> 开始打印</label>
-      <label><input type="checkbox" id="n-finish"> 打印完成</label>
-      <label><input type="checkbox" id="n-failed"> 打印失败</label>
-      <label><input type="checkbox" id="n-pause"> 暂停</label>
-      <label><input type="checkbox" id="n-resume"> 恢复</label>
-      <label><input type="checkbox" id="n-offline"> 打印中离线</label>
-      <label><input type="checkbox" id="n-step"> 进度节点</label>
-      <label>每 <input type="text" id="n-stepv" value="25"> % 推一次</label>
+
+    <div class="sec">
+      <h2>通知规则</h2>
+      <div class="checks">
+        <label><input type="checkbox" id="n-enabled"> 通知总开关</label>
+        <label><input type="checkbox" id="n-start"> 开始打印</label>
+        <label><input type="checkbox" id="n-finish"> 打印完成</label>
+        <label><input type="checkbox" id="n-failed"> 打印失败</label>
+        <label><input type="checkbox" id="n-pause"> 暂停</label>
+        <label><input type="checkbox" id="n-resume"> 恢复</label>
+        <label><input type="checkbox" id="n-offline"> 打印中离线</label>
+        <label><input type="checkbox" id="n-step"> 进度节点推送</label>
+        <label class="num span2">每 <input type="text" id="n-stepv" value="25"> % 推送一次</label>
+      </div>
     </div>
-    <div class="btns">
+
+    <div class="actions">
       <button class="pri" id="b-save">保存全部</button>
       <button id="b-test-ding">测试钉钉推送</button>
     </div>
-    <div class="hint">密钥输入框留空 = 保持已存值。图片/视频经 http://NAS的IP:8787 访问，群成员与 NAS 同一局域网时可查看，外网打不开。</div>
+    <div class="hint">密钥输入框留空表示保持已保存的值。图片与视频经 http://NAS的IP:8787 访问，群成员与 NAS 同一局域网时可查看。</div>
   </section>
 
   <section class="card" id="log-card">
-    <h2>事件日志（最近 50 条）</h2>
+    <div class="card-head"><h2>事件日志</h2><span class="meta">最近 50 条</span></div>
     <ul id="ev"></ul>
     <div class="empty" id="ev-empty" hidden>暂无事件</div>
   </section>
@@ -150,7 +192,7 @@
 </main>
 <div id="toast"></div>
 <div id="cam-pop">
-  <div class="cap"><span id="cam-cap">摄像头画面</span><button class="mini" id="cam-close">关闭</button></div>
+  <div class="cap"><span id="cam-cap">摄像头画面</span><button id="cam-close">关闭</button></div>
   <img id="cam-img" alt="摄像头画面">
 </div>
 <script>
@@ -178,8 +220,8 @@ function el(tag, cls, text){
   if (text != null) n.textContent = text;
   return n;
 }
-function mkInput(cls, ph){
-  const i = el('input', cls);
+function mkInput(ph){
+  const i = el('input');
   i.type = 'text'; i.placeholder = ph; i.autocomplete = 'off'; i.spellcheck = false;
   return i;
 }
@@ -189,35 +231,37 @@ function buildRows(){
   for (let i = 0; i < MAX; i++){
     const tr = el('tr');
     const tdName = el('td'), tdIp = el('td'), tdSn = el('td'), tdCode = el('td');
-    const tdSt = el('td', 'c-st'), tdOp = el('td', 'c-op');
+    const tdSt = el('td', 'c-st'), tdProg = el('td', 'c-prog'), tdOp = el('td', 'c-op');
 
-    const nameIn = mkInput('', `P2S_${i+1}`);
-    const hostIn = mkInput('', '192.168.1.100');
-    const snIn = mkInput('', '01P00A...');
-    const codeIn = mkInput('', '');
-    codeIn.type = 'password'; codeIn.placeholder = '未设置';
+    const nameIn = mkInput(`P2S_${i+1}`);
+    const hostIn = mkInput(i === 0 ? '192.168.1.100' : '');
+    const snIn = mkInput(i === 0 ? '01P00A...' : '');
+    const codeIn = mkInput('未设置');
+    codeIn.type = 'password';
     tdName.append(nameIn); tdIp.append(hostIn); tdSn.append(snIn); tdCode.append(codeIn);
 
-    const line = el('div', 'st-line');
-    const sdot = el('span', 'sdot');
-    const stext = el('span', 'stext', '未配置');
-    line.append(sdot, stext);
+    const chip = el('span', 'chip');
+    const chipDot = el('em');
+    const stext = el('span', '', '未配置');
+    chip.append(chipDot, stext);
+    tdSt.append(chip);
+
     const bar = el('div', 'pbar');
     const fill = el('i');
     bar.append(fill);
-    const meta = el('div', 'pmeta', '');
-    tdSt.append(line, bar, meta);
+    const meta = el('div', 'pmeta', '—');
+    tdProg.append(bar, meta);
 
     const ops = el('div', 'ops');
-    const btnToggle = el('button', 'mini', '启动');
-    const btnTest = el('button', 'mini', '测试');
+    const btnToggle = el('button', 'mini start', '启动');
+    const btnTest = el('button', 'mini test', '测试');
     ops.append(btnToggle, btnTest);
     tdOp.append(ops);
 
-    tr.append(tdName, tdIp, tdSn, tdCode, tdSt, tdOp);
+    tr.append(tdName, tdIp, tdSn, tdCode, tdSt, tdProg, tdOp);
     tb.append(tr);
 
-    const row = {i, nameIn, hostIn, snIn, codeIn, sdot, stext, fill, meta, btnToggle, btnTest, enabled:false};
+    const row = {i, nameIn, hostIn, snIn, codeIn, chip, stext, fill, meta, btnToggle, btnTest, enabled:false};
     btnToggle.onclick = () => togglePrinter(row);
     btnTest.onclick = () => testPrinter(row);
     rows.push(row);
@@ -229,7 +273,7 @@ function renderToggle(row){
   row.btnToggle.className = 'mini ' + (row.enabled ? 'stop' : 'start');
 }
 
-function printerBody(silent){
+function printerBody(){
   return {
     printers: rows.map(r => ({
       name: r.nameIn.value.trim() || `P2S_${r.i+1}`,
@@ -256,7 +300,7 @@ async function saveAll(silent){
   const btn = $('#b-save');
   btn.disabled = true;
   try{
-    const r = await jpost('/api/config', printerBody(silent));
+    const r = await jpost('/api/config', printerBody());
     if (r.ok){
       rows.forEach(x => { x.codeIn.value = ''; });
       if (!silent) toast(r.msg || '已保存', 'ok');
@@ -345,21 +389,11 @@ async function loadConfig(){
   }catch(e){}
 }
 
-function setTemps(row, p){
-  const bits = [];
-  if (p.task) bits.push(p.task);
-  if (p.layer_num != null && p.total_layer_num != null) bits.push(`层 ${p.layer_num}/${p.total_layer_num}`);
-  if (p.nozzle_temper != null) bits.push(`喷嘴 ${p.nozzle_temper}°C`);
-  if (p.bed_temper != null) bits.push(`热床 ${p.bed_temper}°C`);
-  if (p.error_code) bits.push(`错误码 ${p.error_code}`);
-  row.stext.title = bits.join(' | ');
-}
-
 async function refreshStatus(){
   try{
     const s = await jget('/api/status');
     const en = s.enabled_count || 0, on = s.online_count || 0;
-    $('#st-online').textContent = `在线 ${on} / 启用 ${en}`;
+    $('#st-online').textContent = `在线 ${on} · 启用 ${en}`;
     const dot = $('#st-dot');
     if (!en) dot.className = 'dot';
     else if (on === 0) dot.className = 'dot off';
@@ -370,8 +404,8 @@ async function refreshStatus(){
       const row = rows[p.index];
       if (!row) return;
       let label, cls;
-      if (!p.configured){ label = '未配置'; cls = 'off'; }
-      else if (!p.enabled){ label = '未启用'; cls = 'off'; }
+      if (!p.configured){ label = '未配置'; cls = ''; }
+      else if (!p.enabled){ label = '未启用'; cls = ''; }
       else if (!p.connected){ label = '连接中…'; cls = 'warn'; }
       else if (!p.online){ label = '等待数据'; cls = 'warn'; }
       else {
@@ -379,25 +413,37 @@ async function refreshStatus(){
         cls = p.gcode_state === 'RUNNING' ? 'run' : p.gcode_state === 'FAILED' ? 'fail'
             : (p.gcode_state === 'PAUSED' || p.gcode_state === 'PREPARE') ? 'pause' : 'on';
       }
-      row.sdot.className = 'sdot ' + (cls === 'off' ? '' : cls);
+      row.chip.className = 'chip' + (cls ? ' ' + cls : '');
       row.stext.textContent = label;
-      row.stext.className = 'stext ' + (cls === 'run' || cls === 'fail' || cls === 'pause' ? cls : '');
 
       const pct = p.percent || 0;
       row.fill.style.width = Math.min(100, pct) + '%';
       row.fill.style.background = p.gcode_state === 'FAILED' ? 'var(--red)'
                                 : p.gcode_state === 'PAUSED' ? 'var(--amber)' : 'var(--g)';
+
       if (p.enabled && p.online){
         const bits = [];
         if (pct) bits.push(pct + '%');
         const rt = fmtMin(p.remaining_time);
         if (rt) bits.push('剩' + rt);
         if (p.task) bits.push(p.task);
-        row.meta.textContent = bits.join(' · ');
-        setTemps(row, p);
+        row.meta.textContent = bits.join(' · ') || '在线';
+        const tip = [];
+        if (p.task) tip.push(p.task);
+        if (p.layer_num != null && p.total_layer_num != null) tip.push(`层 ${p.layer_num}/${p.total_layer_num}`);
+        if (p.nozzle_temper != null) tip.push(`喷嘴 ${p.nozzle_temper}°C`);
+        if (p.bed_temper != null) tip.push(`热床 ${p.bed_temper}°C`);
+        if (p.error_code) tip.push(`错误码 ${p.error_code}`);
+        row.meta.title = tip.join(' | ');
+      } else if (!p.configured){
+        row.meta.textContent = '—';
+        row.meta.title = '';
+      } else if (!p.enabled){
+        row.meta.textContent = '未启动监控';
+        row.meta.title = '';
       } else {
-        row.meta.textContent = '';
-        row.stext.title = '';
+        row.meta.textContent = '等待打印机上报…';
+        row.meta.title = '';
       }
       if (p.enabled !== row.enabled){ row.enabled = p.enabled; renderToggle(row); }
     });
@@ -413,9 +459,9 @@ async function loadEvents(){
     r.events.forEach(e => {
       const li = el('li');
       const t = el('span', 't', new Date(e.ts * 1000).toLocaleTimeString('zh-CN', {hour12: false}));
-      const mark = el('span', '', '●');
+      const mark = el('span', 'm', '●');
       mark.style.color = e.type === 'error' ? 'var(--red)' : e.type === 'notify' ? 'var(--g)' : 'var(--mut)';
-      li.append(t, mark, el('span', '', e.text));
+      li.append(t, mark, el('span', 'x', e.text));
       ul.append(li);
     });
   }catch(e){}
