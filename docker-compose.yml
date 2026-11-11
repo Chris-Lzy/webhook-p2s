@@ -1,0 +1,12 @@
+services:
+  bambu-dingtalk-monitor:
+    build: .
+    image: bambu-dingtalk-monitor:latest
+    container_name: bambu-dingtalk-monitor
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./data:/app/data

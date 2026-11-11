@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>拓竹打印机监控</title>
+<style>
+  :root{--g:#00ae42;--bg:#f4f6f5;--card:#fff;--tx:#1c2420;--mut:#6b7a72;--bd:#e3e9e6;--red:#d4380d;--amber:#d48806;--blue:#1668dc}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--tx);font-size:14px}
+  header{background:var(--card);border-bottom:1px solid var(--bd);padding:14px 20px;display:flex;align-items:center;justify-content:space-between}
+  header h1{font-size:17px;font-weight:600}
+  header .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#bbb;margin-right:8px}
+  header .dot.on{background:var(--g)}header .dot.warn{background:var(--amber)}header .dot.off{background:var(--red)}
+  main{max-width:780px;margin:20px auto;padding:0 16px;display:flex;flex-direction:column;gap:16px}
+  .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:18px 20px}
+  .card h2{font-size:14px;font-weight:600;color:var(--mut);text-transform:none;margin-bottom:14px}
+  .state-row{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  #st-state{font-size:26px;font-weight:700}
+  #st-state.run{color:var(--g)}#st-state.fail{color:var(--red)}#st-state.pause{color:var(--amber)}
+  #st-badge{font-size:12px;color:var(--mut);border:1px solid var(--bd);border-radius:20px;padding:2px 10px}
+  .bar{height:8px;background:#edf1ef;border-radius:6px;margin:14px 0 6px;overflow:hidden}
+  .bar>div{height:100%;background:var(--g);width:0;transition:width .4s}
+  #st-pct{font-size:13px;color:var(--mut)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:14px}
+  .kv{background:#f8faf9;border:1px solid var(--bd);border-radius:8px;padding:8px 12px}
+  .kv b{display:block;font-size:12px;color:var(--mut);font-weight:500;margin-bottom:2px}
+  .kv span{font-size:14px;font-weight:600}
+  label{display:block;font-size:12px;color:var(--mut);margin:10px 0 4px}
+  input[type=text],input[type=password]{width:100%;padding:8px 10px;border:1px solid var(--bd);border-radius:8px;font-size:13px;background:#fbfcfb}
+  input:focus{outline:none;border-color:var(--g)}
+  .checks{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:6px}
+  .checks label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--tx);margin:0}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media(max-width:560px){.row2{grid-template-columns:1fr}}
+  .btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+  button{padding:9px 18px;border-radius:8px;border:1px solid var(--bd);background:#fff;font-size:13px;cursor:pointer;font-family:inherit}
+  button.pri{background:var(--g);border-color:var(--g);color:#fff}
+  button.pri:hover{background:#00963a}
+  button:hover{border-color:#b9c6c0}
+  button:disabled{opacity:.5;cursor:default}
+  #toast{position:fixed;top:18px;left:50%;transform:translateX(-50%);background:#222c27;color:#fff;padding:9px 20px;border-radius:8px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .25s;z-index:9;max-width:80vw}
+  #toast.err{background:var(--red)}
+  #toast.ok{background:var(--g)}
+  ul#ev{list-style:none;max-height:260px;overflow:auto}
+  ul#ev li{padding:6px 0;border-bottom:1px dashed var(--bd);font-size:13px;color:#3a453f;display:flex;gap:10px}
+  ul#ev li .t{color:var(--mut);flex-shrink:0;font-variant-numeric:tabular-nums}
+  .hint{font-size:12px;color:var(--mut);margin-top:10px;line-height:1.7}
+  .empty{color:var(--mut);font-size:13px;padding:8px 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>拓竹打印机监控</h1>
+  <span><span class="dot" id="st-dot"></span><span id="st-online">加载中</span></span>
+</header>
+<main>
+
+  <section class="card">
+    <div class="state-row">
+      <span id="st-state">—</span>
+      <span id="st-badge">未配置</span>
+    </div>
+    <div class="bar"><div id="st-bar"></div></div>
+    <div id="st-pct">0%</div>
+    <div class="grid">
+      <div class="kv"><b>任务</b><span id="st-task">—</span></div>
+      <div class="kv"><b>剩余时间</b><span id="st-remain">—</span></div>
+      <div class="kv"><b>层数</b><span id="st-layer">—</span></div>
+      <div class="kv"><b>喷嘴 / 热床</b><span id="st-temp">—</span></div>
+      <div class="kv"><b>已用时</b><span id="st-elapsed">—</span></div>
+      <div class="kv"><b>错误码</b><span id="st-err">—</span></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>打印机配置（拓竹屏幕：设置 → 局域网模式，开启后获取访问码）</h2>
+    <div class="row2">
+      <div><label>打印机 IP</label><input type="text" id="f-host" placeholder="如 192.168.1.100"></div>
+      <div><label>序列号 SN</label><input type="text" id="f-sn" placeholder="01P00A..."></div>
+    </div>
+    <label>访问码 Access Code</label>
+    <input type="password" id="f-code" placeholder="">
+    <h2 style="margin-top:22px">钉钉群机器人（群设置 → 智能群助手 → 自定义机器人）</h2>
+    <label>Webhook 地址</label>
+    <input type="text" id="f-webhook" placeholder="https://oapi.dingtalk.com/robot/send?access_token=...">
+    <label>加签密钥 SEC（安全设置为“加签”时填写）</label>
+    <input type="password" id="f-secret" placeholder="">
+    <label>消息关键词（安全设置为“自定义关键词”时填写，会自动加在消息标题前）</label>
+    <input type="text" id="f-keyword" placeholder="如：打印">
+    <h2 style="margin-top:22px">通知规则</h2>
+    <div class="checks">
+      <label><input type="checkbox" id="n-enabled"> 通知总开关</label>
+      <label><input type="checkbox" id="n-start"> 开始打印</label>
+      <label><input type="checkbox" id="n-finish"> 打印完成</label>
+      <label><input type="checkbox" id="n-failed"> 打印失败</label>
+      <label><input type="checkbox" id="n-pause"> 暂停</label>
+      <label><input type="checkbox" id="n-resume"> 恢复</label>
+      <label><input type="checkbox" id="n-offline"> 打印中离线</label>
+      <label><input type="checkbox" id="n-step"> 进度节点推送</label>
+      <label>每 <input type="text" id="n-stepv" style="width:44px;text-align:center;padding:4px"> % 推一次</label>
+    </div>
+    <div class="btns">
+      <button class="pri" id="b-save">保存配置</button>
+      <button id="b-test-printer">测试打印机连接</button>
+      <button id="b-test-ding">测试钉钉推送</button>
+    </div>
+    <div class="hint">密钥类输入框留空表示保持已保存的值不变。保存后监控自动重连，约 10 秒内生效。</div>
+  </section>
+
+  <section class="card">
+    <h2>事件日志（最近 50 条）</h2>
+    <ul id="ev"></ul>
+    <div class="empty" id="ev-empty" hidden>暂无事件</div>
+  </section>
+
+</main>
+<div id="toast"></div>
+<script>
+const $ = s => document.querySelector(s);
+let toastTimer;
+function toast(msg, cls){
+  const t = $('#toast');
+  t.textContent = msg; t.className = cls || '';
+  t.style.opacity = 1;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.style.opacity = 0, cls === 'err' ? 5000 : 2500);
+}
+async function jget(u){ const r = await fetch(u); return r.json(); }
+async function jpost(u, d){
+  const r = await fetch(u, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(d||{})});
+  return r.json();
+}
+const fmtMin = m => !m || m <= 0 ? '—' : m >= 60 ? `${Math.floor(m/60)}小时${m%60}分` : `${m}分钟`;
+
+async function refreshStatus(){
+  try{
+    const s = await jget('/api/status');
+    const dot = $('#st-dot');
+    if (s.online){ dot.className = 'dot on'; $('#st-online').textContent = '在线'; }
+    else if (s.connected){ dot.className = 'dot warn'; $('#st-online').textContent = '已连接·等待数据'; }
+    else { dot.className = 'dot off'; $('#st-online').textContent = '离线'; }
+    $('#st-badge').textContent = s.configured ? `MQTT ${s.connected ? '已连接' : '未连接'}` : '未配置打印机';
+    const st = $('#st-state');
+    st.textContent = s.state_text || '—';
+    st.className = s.gcode_state === 'RUNNING' ? 'run' : (s.gcode_state === 'FAILED' ? 'fail' : (s.gcode_state === 'PAUSED' ? 'pause' : ''));
+    const pct = s.percent || 0;
+    $('#st-bar').style.width = pct + '%';
+    $('#st-bar').style.background = s.gcode_state === 'FAILED' ? 'var(--red)' : (s.gcode_state === 'PAUSED' ? 'var(--amber)' : 'var(--g)');
+    $('#st-pct').textContent = pct + '%';
+    $('#st-task').textContent = s.subtask_name || (s.gcode_file ? s.gcode_file.split('/').pop() : '—');
+    $('#st-remain').textContent = fmtMin(s.remaining_time);
+    $('#st-layer').textContent = (s.layer_num && s.total_layer_num) ? `${s.layer_num} / ${s.total_layer_num}` : '—';
+    $('#st-temp').textContent = (s.nozzle_temper != null || s.bed_temper != null) ? `${s.nozzle_temper ?? '—'}°C / ${s.bed_temper ?? '—'}°C` : '—';
+    $('#st-elapsed').textContent = fmtMin(s.elapsed_mins);
+    $('#st-err').textContent = s.error_code || '—';
+  }catch(e){}
+}
+
+async function loadConfig(){
+  try{
+    const c = await jget('/api/config');
+    $('#f-host').value = c.printer.host;
+    $('#f-sn').value = c.printer.sn;
+    $('#f-code').placeholder = c.printer.access_code_set ? '已配置，留空保持不变' : '';
+    $('#f-webhook').placeholder = c.dingtalk.webhook_set ? '已配置，留空保持不变' : 'https://oapi.dingtalk.com/robot/send?access_token=...';
+    $('#f-secret').placeholder = c.dingtalk.secret_set ? '已配置，留空保持不变' : 'SEC...';
+    $('#f-keyword').value = c.dingtalk.keyword;
+    $('#n-enabled').checked = c.notify.enabled;
+    $('#n-start').checked = c.notify.on_start;
+    $('#n-finish').checked = c.notify.on_finish;
+    $('#n-failed').checked = c.notify.on_failed;
+    $('#n-pause').checked = c.notify.on_pause;
+    $('#n-resume').checked = c.notify.on_resume;
+    $('#n-offline').checked = c.notify.on_offline;
+    $('#n-step').checked = c.notify.progress_step > 0;
+    $('#n-stepv').value = c.notify.progress_step > 0 ? c.notify.progress_step : 25;
+  }catch(e){}
+}
+
+async function saveConfig(){
+  const body = {
+    printer: {host: $('#f-host').value, sn: $('#f-sn').value, access_code: $('#f-code').value},
+    dingtalk: {webhook: $('#f-webhook').value, secret: $('#f-secret').value, keyword: $('#f-keyword').value},
+    notify: {
+      enabled: $('#n-enabled').checked, on_start: $('#n-start').checked,
+      on_finish: $('#n-finish').checked, on_failed: $('#n-failed').checked,
+      on_pause: $('#n-pause').checked, on_resume: $('#n-resume').checked,
+      on_offline: $('#n-offline').checked,
+      progress_step: $('#n-step').checked ? (parseInt($('#n-stepv').value) || 25) : 0
+    }
+  };
+  const btn = $('#b-save'); btn.disabled = true;
+  try{
+    const r = await jpost('/api/config', body);
+    toast(r.msg || r.detail || '已保存', r.ok ? 'ok' : 'err');
+    if (r.ok) $('#f-code').value = $('#f-webhook').value = $('#f-secret').value = '';
+  }catch(e){ toast('保存失败：' + e, 'err'); }
+  btn.disabled = false;
+  loadConfig();
+}
+
+async function testPrinter(){
+  const btn = $('#b-test-printer'); btn.disabled = true; btn.textContent = '连接中...';
+  try{
+    const r = await jpost('/api/test/printer', {host: $('#f-host').value, sn: $('#f-sn').value, access_code: $('#f-code').value});
+    toast(r.msg, r.ok ? 'ok' : 'err');
+  }catch(e){ toast('测试失败：' + e, 'err'); }
+  btn.disabled = false; btn.textContent = '测试打印机连接';
+}
+
+async function testDing(){
+  const btn = $('#b-test-ding'); btn.disabled = true; btn.textContent = '发送中...';
+  try{
+    const r = await jpost('/api/test/dingtalk', {});
+    toast(r.msg, r.ok ? 'ok' : 'err');
+  }catch(e){ toast('测试失败：' + e, 'err'); }
+  btn.disabled = false; btn.textContent = '测试钉钉推送';
+}
+
+async function loadEvents(){
+  try{
+    const r = await jget('/api/events');
+    const ul = $('#ev');
+    $('#ev-empty').hidden = r.events.length > 0;
+    ul.innerHTML = r.events.map(e => {
+      const t = new Date(e.ts * 1000).toLocaleTimeString('zh-CN', {hour12: false});
+      const color = e.type === 'error' ? 'var(--red)' : e.type === 'notify' ? 'var(--g)' : 'var(--mut)';
+      return `<li><span class="t">${t}</span><span style="color:${color}">●</span><span>${e.text}</span></li>`;
+    }).join('');
+  }catch(e){}
+}
+
+$('#b-save').onclick = saveConfig;
+$('#b-test-printer').onclick = testPrinter;
+$('#b-test-ding').onclick = testDing;
+refreshStatus(); setInterval(refreshStatus, 3000);
+loadConfig(); loadEvents(); setInterval(loadEvents, 5000);
+</script>
+</body>
+</html>
