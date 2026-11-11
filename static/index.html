@@ -14,36 +14,53 @@
   .tag{font-size:11px;color:var(--mut);border:1px solid var(--bd);border-radius:10px;padding:1px 8px;margin-left:8px;vertical-align:2px;font-weight:400}
   header .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#bbb;margin-right:6px}
   header .dot.on{background:var(--g)}header .dot.warn{background:var(--amber)}header .dot.off{background:var(--red)}
-  main{flex:1;min-height:0;display:grid;grid-template-columns:340px minmax(0,1fr) 320px;gap:14px;padding:12px 14px}
-  .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px 16px;min-height:0;display:flex;flex-direction:column}
+  #st-online{font-size:12px;color:var(--mut);font-variant-numeric:tabular-nums}
+  main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.5fr) 360px 300px;grid-template-areas:"table cfg log";gap:14px;padding:12px 14px}
+  .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px 14px;min-height:0;display:flex;flex-direction:column}
+  #printer-card{grid-area:table}
+  #config-card{grid-area:cfg;overflow-y:auto}
+  #log-card{grid-area:log}
   h2{font-size:12px;font-weight:600;color:var(--mut);margin:0 0 8px}
   h2:not(:first-child){margin-top:14px}
   label{display:block;font-size:11px;color:var(--mut);margin:6px 0 3px}
-  input[type=text],input[type=password]{width:100%;padding:6px 9px;border:1px solid var(--bd);border-radius:7px;font-size:12px;background:#fbfcfb}
+  input[type=text],input[type=password]{width:100%;padding:6px 9px;border:1px solid var(--bd);border-radius:7px;font-size:12px;background:#fbfcfb;font-family:inherit}
   input:focus{outline:none;border-color:var(--g)}
-  .state-row{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
-  #st-state{font-size:24px;font-weight:700}
-  #st-state.run{color:var(--g)}#st-state.fail{color:var(--red)}#st-state.pause{color:var(--amber)}
-  #st-badge{font-size:11px;color:var(--mut);border:1px solid var(--bd);border-radius:20px;padding:2px 9px}
-  .bar{height:7px;background:#edf1ef;border-radius:6px;margin:12px 0 4px;overflow:hidden}
-  .bar>div{height:100%;background:var(--g);width:0;transition:width .4s}
-  #st-pct{font-size:12px;color:var(--mut)}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
-  .kv{background:#f8faf9;border:1px solid var(--bd);border-radius:8px;padding:6px 10px;min-width:0}
-  .kv b{display:block;font-size:11px;color:var(--mut);font-weight:500;margin-bottom:1px}
-  .kv span{font-size:13px;font-weight:600;word-break:break-all}
   .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .checks{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:2px}
   .checks label{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--tx);margin:0}
   .checks input[type=text]{width:44px;text-align:center;padding:3px}
   .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
-  button{padding:7px 14px;border-radius:8px;border:1px solid var(--bd);background:#fff;font-size:12px;cursor:pointer;font-family:inherit}
+  button{padding:7px 14px;border-radius:8px;border:1px solid var(--bd);background:#fff;font-size:12px;cursor:pointer;font-family:inherit;color:var(--tx)}
   button.pri{background:var(--g);border-color:var(--g);color:#fff}
   button.pri:hover{background:#00963a}
   button:hover{border-color:#b9c6c0}
   button:disabled{opacity:.5;cursor:default}
   .hint{font-size:11px;color:var(--mut);margin-top:8px;line-height:1.6}
-  #config-card{overflow-y:auto}
+  .table-wrap{flex:1;min-height:0;overflow:auto}
+  table{width:100%;min-width:700px;border-collapse:collapse;table-layout:fixed;font-size:12px}
+  th{position:sticky;top:0;z-index:1;background:var(--card);text-align:left;font-size:11px;color:var(--mut);font-weight:500;padding:5px 4px;border-bottom:1px solid var(--bd)}
+  td{padding:3px 4px;border-bottom:1px solid #f1f5f3;vertical-align:middle}
+  tbody tr:hover{background:#fafcfb}
+  td input{padding:4px 6px;font-size:11px;border-radius:6px}
+  .c-st{width:190px}
+  .c-op{width:92px}
+  .st-line{display:flex;align-items:center;gap:5px;min-width:0}
+  .sdot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#c4ccc8;flex:0 0 auto}
+  .sdot.on,.sdot.run{background:var(--g)}
+  .sdot.run{box-shadow:0 0 0 3px rgba(0,174,66,.16)}
+  .sdot.warn{background:var(--amber)}
+  .sdot.fail{background:var(--red)}
+  .sdot.pause{background:var(--amber)}
+  .stext{font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stext.run{color:var(--g)}.stext.fail{color:var(--red)}.stext.pause{color:var(--amber)}
+  .pbar{height:4px;background:#edf1ef;border-radius:4px;margin:4px 0 2px;overflow:hidden}
+  .pbar>i{display:block;height:100%;width:0;background:var(--g);transition:width .4s}
+  .pmeta{font-size:10px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ops{display:flex;gap:4px}
+  button.mini{padding:3px 7px;font-size:11px;border-radius:6px;line-height:1.5}
+  button.mini.start{background:var(--g);border-color:var(--g);color:#fff}
+  button.mini.start:hover{background:#00963a}
+  button.mini.stop{background:#fff6e8;border-color:#f0c27a;color:#8a5a00}
   #log-card ul{list-style:none;flex:1;overflow-y:auto;min-height:0}
   #log-card li{padding:5px 0;border-bottom:1px dashed var(--bd);font-size:12px;color:#3a453f;display:flex;gap:8px;align-items:baseline}
   #log-card li .t{color:var(--mut);flex-shrink:0;font-variant-numeric:tabular-nums}
@@ -51,15 +68,19 @@
   #toast{position:fixed;top:14px;left:50%;transform:translateX(-50%);background:#222c27;color:#fff;padding:8px 18px;border-radius:8px;font-size:12px;opacity:0;pointer-events:none;transition:opacity .25s;z-index:9;max-width:80vw}
   #toast.err{background:var(--red)}
   #toast.ok{background:var(--g)}
-  #cam-box img{max-width:100%;border-radius:8px;border:1px solid var(--bd);margin-top:10px}
-  @media (max-width:1280px){
+  #cam-pop{position:fixed;right:16px;bottom:16px;width:340px;max-width:80vw;background:var(--card);border:1px solid var(--bd);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.16);padding:8px;z-index:8;display:none}
+  #cam-pop .cap{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--mut);margin-bottom:6px}
+  #cam-pop img{width:100%;border-radius:6px;display:block}
+  @media (max-width:1400px){main{grid-template-columns:minmax(0,1fr) 340px 280px}}
+  @media (max-width:1180px){
     body{overflow:auto}
-    main{grid-template-columns:minmax(0,1fr) 300px;height:auto}
+    main{height:auto;grid-template-columns:minmax(0,1fr) 300px;grid-template-areas:"table log" "cfg log"}
     #config-card{overflow:visible}
-    #log-card ul{max-height:340px}
+    .table-wrap{max-height:60vh}
   }
   @media (max-width:860px){
-    main{grid-template-columns:1fr}
+    main{grid-template-columns:1fr;grid-template-areas:"table" "cfg" "log"}
+    #log-card ul{max-height:320px}
   }
 </style>
 </head>
@@ -70,31 +91,23 @@
 </header>
 <main>
 
-  <section class="card" id="status-card">
-    <div class="state-row">
-      <span id="st-state">—</span>
-      <span id="st-badge">未配置</span>
+  <section class="card" id="printer-card">
+    <h2>打印机列表（共 20 个席位，使用哪个就填哪个；拓竹屏幕：设置 → 局域网模式，开启后获取访问码）</h2>
+    <div class="table-wrap">
+      <table>
+        <colgroup>
+          <col style="width:100px"><col style="width:122px"><col style="width:118px"><col style="width:96px"><col><col style="width:92px">
+        </colgroup>
+        <thead>
+          <tr><th>设备名称</th><th>打印机 IP</th><th>序列号 SN</th><th>访问码</th><th>状态 / 进度</th><th>操作</th></tr>
+        </thead>
+        <tbody id="ptbody"></tbody>
+      </table>
     </div>
-    <div class="bar"><div id="st-bar"></div></div>
-    <div id="st-pct">0%</div>
-    <div class="grid">
-      <div class="kv"><b>任务</b><span id="st-task">—</span></div>
-      <div class="kv"><b>剩余时间</b><span id="st-remain">—</span></div>
-      <div class="kv"><b>层数</b><span id="st-layer">—</span></div>
-      <div class="kv"><b>喷嘴 / 热床</b><span id="st-temp">—</span></div>
-      <div class="kv"><b>已用时</b><span id="st-elapsed">—</span></div>
-      <div class="kv"><b>错误码</b><span id="st-err">—</span></div>
-    </div>
+    <div class="hint">填好后点右侧“保存全部”，再点该行“启动”。推送消息标题自动带设备名称，例如「P2S_1 开始打印」。</div>
   </section>
 
   <section class="card" id="config-card">
-    <h2>打印机配置（拓竹屏幕：设置 → 局域网模式，开启后获取访问码）</h2>
-    <div class="row2">
-      <div><label>打印机 IP</label><input type="text" id="f-host" placeholder="如 192.168.1.100"></div>
-      <div><label>序列号 SN</label><input type="text" id="f-sn" placeholder="01P00A..."></div>
-    </div>
-    <label>访问码 Access Code</label>
-    <input type="password" id="f-code" placeholder="">
     <h2>钉钉群机器人（群设置 → 智能群助手 → 自定义机器人）</h2>
     <label>Webhook 地址</label>
     <input type="text" id="f-webhook" placeholder="https://oapi.dingtalk.com/robot/send?access_token=...">
@@ -122,15 +135,10 @@
       <label>每 <input type="text" id="n-stepv" value="25"> % 推一次</label>
     </div>
     <div class="btns">
-      <button class="pri" id="b-save">保存配置</button>
-      <button id="b-test-printer">测试打印机连接</button>
+      <button class="pri" id="b-save">保存全部</button>
       <button id="b-test-ding">测试钉钉推送</button>
-      <button id="b-test-cam">测试摄像头抓图</button>
     </div>
-    <div class="hint">密钥输入框留空 = 保持已存值；保存后约 10 秒内生效。图片/视频经 http://NAS的IP:8787 访问，群成员与 NAS 同一局域网时可查看，外网打不开。</div>
-    <div id="cam-box" hidden>
-      <img id="cam-img" alt="摄像头测试画面">
-    </div>
+    <div class="hint">密钥输入框留空 = 保持已存值。图片/视频经 http://NAS的IP:8787 访问，群成员与 NAS 同一局域网时可查看，外网打不开。</div>
   </section>
 
   <section class="card" id="log-card">
@@ -141,9 +149,16 @@
 
 </main>
 <div id="toast"></div>
+<div id="cam-pop">
+  <div class="cap"><span id="cam-cap">摄像头画面</span><button class="mini" id="cam-close">关闭</button></div>
+  <img id="cam-img" alt="摄像头画面">
+</div>
 <script>
+const MAX = 20;
 const $ = s => document.querySelector(s);
-let toastTimer;
+let toastTimer, camTimer;
+const rows = [];
+
 function toast(msg, cls){
   const t = $('#toast');
   t.textContent = msg; t.className = cls || '';
@@ -156,41 +171,164 @@ async function jpost(u, d){
   const r = await fetch(u, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(d||{})});
   return r.json();
 }
-const fmtMin = m => !m || m <= 0 ? '—' : m >= 60 ? `${Math.floor(m/60)}小时${m%60}分` : `${m}分钟`;
+const fmtMin = m => !m || m <= 0 ? '' : m >= 60 ? `${Math.floor(m/60)}小时${m%60}分` : `${m}分钟`;
+function el(tag, cls, text){
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
+function mkInput(cls, ph){
+  const i = el('input', cls);
+  i.type = 'text'; i.placeholder = ph; i.autocomplete = 'off'; i.spellcheck = false;
+  return i;
+}
 
-async function refreshStatus(){
+function buildRows(){
+  const tb = $('#ptbody');
+  for (let i = 0; i < MAX; i++){
+    const tr = el('tr');
+    const tdName = el('td'), tdIp = el('td'), tdSn = el('td'), tdCode = el('td');
+    const tdSt = el('td', 'c-st'), tdOp = el('td', 'c-op');
+
+    const nameIn = mkInput('', `P2S_${i+1}`);
+    const hostIn = mkInput('', '192.168.1.100');
+    const snIn = mkInput('', '01P00A...');
+    const codeIn = mkInput('', '');
+    codeIn.type = 'password'; codeIn.placeholder = '未设置';
+    tdName.append(nameIn); tdIp.append(hostIn); tdSn.append(snIn); tdCode.append(codeIn);
+
+    const line = el('div', 'st-line');
+    const sdot = el('span', 'sdot');
+    const stext = el('span', 'stext', '未配置');
+    line.append(sdot, stext);
+    const bar = el('div', 'pbar');
+    const fill = el('i');
+    bar.append(fill);
+    const meta = el('div', 'pmeta', '');
+    tdSt.append(line, bar, meta);
+
+    const ops = el('div', 'ops');
+    const btnToggle = el('button', 'mini', '启动');
+    const btnTest = el('button', 'mini', '测试');
+    ops.append(btnToggle, btnTest);
+    tdOp.append(ops);
+
+    tr.append(tdName, tdIp, tdSn, tdCode, tdSt, tdOp);
+    tb.append(tr);
+
+    const row = {i, nameIn, hostIn, snIn, codeIn, sdot, stext, fill, meta, btnToggle, btnTest, enabled:false};
+    btnToggle.onclick = () => togglePrinter(row);
+    btnTest.onclick = () => testPrinter(row);
+    rows.push(row);
+  }
+}
+
+function renderToggle(row){
+  row.btnToggle.textContent = row.enabled ? '停用' : '启动';
+  row.btnToggle.className = 'mini ' + (row.enabled ? 'stop' : 'start');
+}
+
+function printerBody(silent){
+  return {
+    printers: rows.map(r => ({
+      name: r.nameIn.value.trim() || `P2S_${r.i+1}`,
+      host: r.hostIn.value.trim(),
+      sn: r.snIn.value.trim(),
+      access_code: r.codeIn.value.trim()
+    })),
+    dingtalk: {webhook: $('#f-webhook').value, secret: $('#f-secret').value, keyword: $('#f-keyword').value},
+    notify: {
+      enabled: $('#n-enabled').checked, on_start: $('#n-start').checked,
+      on_finish: $('#n-finish').checked, on_failed: $('#n-failed').checked,
+      on_pause: $('#n-pause').checked, on_resume: $('#n-resume').checked,
+      on_offline: $('#n-offline').checked,
+      progress_step: $('#n-step').checked ? (parseInt($('#n-stepv').value) || 25) : 0
+    },
+    camera: {
+      enabled: $('#c-enabled').checked, snapshot: $('#c-snap').checked,
+      clip: $('#c-clip').checked, clip_seconds: parseInt($('#c-sec').value) || 5
+    }
+  };
+}
+
+async function saveAll(silent){
+  const btn = $('#b-save');
+  btn.disabled = true;
   try{
-    const s = await jget('/api/status');
-    const dot = $('#st-dot');
-    if (s.online){ dot.className = 'dot on'; $('#st-online').textContent = '在线'; }
-    else if (s.connected){ dot.className = 'dot warn'; $('#st-online').textContent = '已连接·等待数据'; }
-    else { dot.className = 'dot off'; $('#st-online').textContent = '离线'; }
-    $('#st-badge').textContent = s.configured ? `MQTT ${s.connected ? '已连接' : '未连接'}` : '未配置打印机';
-    const st = $('#st-state');
-    st.textContent = s.state_text || '—';
-    st.className = s.gcode_state === 'RUNNING' ? 'run' : (s.gcode_state === 'FAILED' ? 'fail' : (s.gcode_state === 'PAUSED' ? 'pause' : ''));
-    const pct = s.percent || 0;
-    $('#st-bar').style.width = pct + '%';
-    $('#st-bar').style.background = s.gcode_state === 'FAILED' ? 'var(--red)' : (s.gcode_state === 'PAUSED' ? 'var(--amber)' : 'var(--g)');
-    $('#st-pct').textContent = pct + '%';
-    $('#st-task').textContent = s.subtask_name || (s.gcode_file ? s.gcode_file.split('/').pop() : '—');
-    $('#st-remain').textContent = fmtMin(s.remaining_time);
-    $('#st-layer').textContent = (s.layer_num && s.total_layer_num) ? `${s.layer_num} / ${s.total_layer_num}` : '—';
-    $('#st-temp').textContent = (s.nozzle_temper != null || s.bed_temper != null) ? `${s.nozzle_temper ?? '—'}°C / ${s.bed_temper ?? '—'}°C` : '—';
-    $('#st-elapsed').textContent = fmtMin(s.elapsed_mins);
-    $('#st-err').textContent = s.error_code || '—';
-  }catch(e){}
+    const r = await jpost('/api/config', printerBody(silent));
+    if (r.ok){
+      rows.forEach(x => { x.codeIn.value = ''; });
+      if (!silent) toast(r.msg || '已保存', 'ok');
+    } else {
+      toast(r.msg || r.detail || '保存失败', 'err');
+    }
+    return !!r.ok;
+  }catch(e){
+    toast('保存失败：' + e, 'err');
+    return false;
+  }finally{
+    btn.disabled = false;
+  }
+}
+
+async function togglePrinter(row){
+  const enabling = !row.enabled;
+  if (enabling){
+    const ok = await saveAll(true);
+    if (!ok) return;
+    await loadConfig();
+  }
+  row.btnToggle.disabled = true;
+  try{
+    const r = await jpost(`/api/printer/${row.i}/toggle`, {enabled: enabling});
+    toast(r.msg || r.detail || '完成', r.ok ? 'ok' : 'err');
+    if (r.ok){
+      row.enabled = enabling;
+      renderToggle(row);
+    }
+  }catch(e){ toast('操作失败：' + e, 'err'); }
+  row.btnToggle.disabled = false;
+}
+
+function showPreview(url, caption){
+  clearTimeout(camTimer);
+  $('#cam-cap').textContent = caption || '摄像头画面';
+  $('#cam-img').src = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
+  $('#cam-pop').style.display = 'block';
+  camTimer = setTimeout(() => { $('#cam-pop').style.display = 'none'; }, 15000);
+}
+
+async function testPrinter(row){
+  const ok = await saveAll(true);
+  if (!ok) return;
+  const btn = row.btnTest;
+  btn.disabled = true; btn.textContent = '测试中';
+  try{
+    const r = await jpost('/api/test/printer', {index: row.i});
+    toast(r.msg || r.detail || '测试完成', r.ok ? 'ok' : 'err');
+    if (r.url) showPreview(r.url, row.nameIn.value.trim() || `P2S_${row.i+1}`);
+  }catch(e){ toast('测试失败：' + e, 'err'); }
+  btn.disabled = false; btn.textContent = '测试';
 }
 
 async function loadConfig(){
   try{
     const c = await jget('/api/config');
-    $('#f-host').value = c.printer.host;
-    $('#f-sn').value = c.printer.sn;
-    $('#f-code').placeholder = c.printer.access_code_set ? '已配置，留空保持不变' : '';
+    (c.printers || []).slice(0, MAX).forEach((p, i) => {
+      const row = rows[i];
+      if (!row) return;
+      row.nameIn.value = p.name || '';
+      row.hostIn.value = p.host || '';
+      row.snIn.value = p.sn || '';
+      row.codeIn.value = '';
+      row.codeIn.placeholder = p.access_code_set ? '已配置' : '未设置';
+      row.enabled = !!p.enabled;
+      renderToggle(row);
+    });
     $('#f-webhook').placeholder = c.dingtalk.webhook_set ? '已配置，留空保持不变' : 'https://oapi.dingtalk.com/robot/send?access_token=...';
     $('#f-secret').placeholder = c.dingtalk.secret_set ? '已配置，留空保持不变' : 'SEC...';
-    $('#f-keyword').value = c.dingtalk.keyword;
+    $('#f-keyword').value = c.dingtalk.keyword || '';
     $('#c-enabled').checked = c.camera.enabled;
     $('#c-snap').checked = c.camera.snapshot;
     $('#c-clip').checked = c.camera.clip;
@@ -207,61 +345,63 @@ async function loadConfig(){
   }catch(e){}
 }
 
-async function saveConfig(){
-  const body = {
-    printer: {host: $('#f-host').value, sn: $('#f-sn').value, access_code: $('#f-code').value},
-    dingtalk: {webhook: $('#f-webhook').value, secret: $('#f-secret').value, keyword: $('#f-keyword').value},
-    notify: {
-      enabled: $('#n-enabled').checked, on_start: $('#n-start').checked,
-      on_finish: $('#n-finish').checked, on_failed: $('#n-failed').checked,
-      on_pause: $('#n-pause').checked, on_resume: $('#n-resume').checked,
-      on_offline: $('#n-offline').checked,
-      progress_step: $('#n-step').checked ? (parseInt($('#n-stepv').value) || 25) : 0
-    },
-    camera: {
-      enabled: $('#c-enabled').checked, snapshot: $('#c-snap').checked,
-      clip: $('#c-clip').checked, clip_seconds: parseInt($('#c-sec').value) || 5
-    }
-  };
-  const btn = $('#b-save'); btn.disabled = true;
-  try{
-    const r = await jpost('/api/config', body);
-    toast(r.msg || r.detail || '已保存', r.ok ? 'ok' : 'err');
-    if (r.ok) $('#f-code').value = $('#f-webhook').value = $('#f-secret').value = '';
-  }catch(e){ toast('保存失败：' + e, 'err'); }
-  btn.disabled = false;
-  loadConfig();
+function setTemps(row, p){
+  const bits = [];
+  if (p.task) bits.push(p.task);
+  if (p.layer_num != null && p.total_layer_num != null) bits.push(`层 ${p.layer_num}/${p.total_layer_num}`);
+  if (p.nozzle_temper != null) bits.push(`喷嘴 ${p.nozzle_temper}°C`);
+  if (p.bed_temper != null) bits.push(`热床 ${p.bed_temper}°C`);
+  if (p.error_code) bits.push(`错误码 ${p.error_code}`);
+  row.stext.title = bits.join(' | ');
 }
 
-async function testPrinter(){
-  const btn = $('#b-test-printer'); btn.disabled = true; btn.textContent = '连接中...';
+async function refreshStatus(){
   try{
-    const r = await jpost('/api/test/printer', {host: $('#f-host').value, sn: $('#f-sn').value, access_code: $('#f-code').value});
-    toast(r.msg, r.ok ? 'ok' : 'err');
-  }catch(e){ toast('测试失败：' + e, 'err'); }
-  btn.disabled = false; btn.textContent = '测试打印机连接';
-}
+    const s = await jget('/api/status');
+    const en = s.enabled_count || 0, on = s.online_count || 0;
+    $('#st-online').textContent = `在线 ${on} / 启用 ${en}`;
+    const dot = $('#st-dot');
+    if (!en) dot.className = 'dot';
+    else if (on === 0) dot.className = 'dot off';
+    else if (on < en) dot.className = 'dot warn';
+    else dot.className = 'dot on';
 
-async function testDing(){
-  const btn = $('#b-test-ding'); btn.disabled = true; btn.textContent = '发送中...';
-  try{
-    const r = await jpost('/api/test/dingtalk', {});
-    toast(r.msg, r.ok ? 'ok' : 'err');
-  }catch(e){ toast('测试失败：' + e, 'err'); }
-  btn.disabled = false; btn.textContent = '测试钉钉推送';
-}
+    (s.printers || []).forEach(p => {
+      const row = rows[p.index];
+      if (!row) return;
+      let label, cls;
+      if (!p.configured){ label = '未配置'; cls = 'off'; }
+      else if (!p.enabled){ label = '未启用'; cls = 'off'; }
+      else if (!p.connected){ label = '连接中…'; cls = 'warn'; }
+      else if (!p.online){ label = '等待数据'; cls = 'warn'; }
+      else {
+        label = p.state_text || '在线';
+        cls = p.gcode_state === 'RUNNING' ? 'run' : p.gcode_state === 'FAILED' ? 'fail'
+            : (p.gcode_state === 'PAUSED' || p.gcode_state === 'PREPARE') ? 'pause' : 'on';
+      }
+      row.sdot.className = 'sdot ' + (cls === 'off' ? '' : cls);
+      row.stext.textContent = label;
+      row.stext.className = 'stext ' + (cls === 'run' || cls === 'fail' || cls === 'pause' ? cls : '');
 
-async function testCam(){
-  const btn = $('#b-test-cam'); btn.disabled = true; btn.textContent = '抓图中...';
-  try{
-    const r = await jpost('/api/test/camera', {});
-    toast(r.msg, r.ok ? 'ok' : 'err');
-    if (r.ok && r.url){
-      $('#cam-img').src = r.url + '?t=' + Date.now();
-      $('#cam-box').hidden = false;
-    }
-  }catch(e){ toast('测试失败：' + e, 'err'); }
-  btn.disabled = false; btn.textContent = '测试摄像头抓图';
+      const pct = p.percent || 0;
+      row.fill.style.width = Math.min(100, pct) + '%';
+      row.fill.style.background = p.gcode_state === 'FAILED' ? 'var(--red)'
+                                : p.gcode_state === 'PAUSED' ? 'var(--amber)' : 'var(--g)';
+      if (p.enabled && p.online){
+        const bits = [];
+        if (pct) bits.push(pct + '%');
+        const rt = fmtMin(p.remaining_time);
+        if (rt) bits.push('剩' + rt);
+        if (p.task) bits.push(p.task);
+        row.meta.textContent = bits.join(' · ');
+        setTemps(row, p);
+      } else {
+        row.meta.textContent = '';
+        row.stext.title = '';
+      }
+      if (p.enabled !== row.enabled){ row.enabled = p.enabled; renderToggle(row); }
+    });
+  }catch(e){}
 }
 
 async function loadEvents(){
@@ -269,20 +409,36 @@ async function loadEvents(){
     const r = await jget('/api/events');
     const ul = $('#ev');
     $('#ev-empty').hidden = r.events.length > 0;
-    ul.innerHTML = r.events.map(e => {
-      const t = new Date(e.ts * 1000).toLocaleTimeString('zh-CN', {hour12: false});
-      const color = e.type === 'error' ? 'var(--red)' : e.type === 'notify' ? 'var(--g)' : 'var(--mut)';
-      return `<li><span class="t">${t}</span><span style="color:${color}">●</span><span>${e.text}</span></li>`;
-    }).join('');
+    ul.replaceChildren();
+    r.events.forEach(e => {
+      const li = el('li');
+      const t = el('span', 't', new Date(e.ts * 1000).toLocaleTimeString('zh-CN', {hour12: false}));
+      const mark = el('span', '', '●');
+      mark.style.color = e.type === 'error' ? 'var(--red)' : e.type === 'notify' ? 'var(--g)' : 'var(--mut)';
+      li.append(t, mark, el('span', '', e.text));
+      ul.append(li);
+    });
   }catch(e){}
 }
 
-$('#b-save').onclick = saveConfig;
-$('#b-test-printer').onclick = testPrinter;
-$('#b-test-ding').onclick = testDing;
-$('#b-test-cam').onclick = testCam;
-refreshStatus(); setInterval(refreshStatus, 3000);
-loadConfig(); loadEvents(); setInterval(loadEvents, 5000);
+$('#b-save').onclick = async () => {
+  if (await saveAll(false)) loadConfig();
+};
+$('#b-test-ding').onclick = async () => {
+  const btn = $('#b-test-ding');
+  btn.disabled = true; btn.textContent = '发送中...';
+  try{
+    const r = await jpost('/api/test/dingtalk', {});
+    toast(r.msg, r.ok ? 'ok' : 'err');
+  }catch(e){ toast('测试失败：' + e, 'err'); }
+  btn.disabled = false; btn.textContent = '测试钉钉推送';
+};
+$('#cam-close').onclick = () => { $('#cam-pop').style.display = 'none'; clearTimeout(camTimer); };
+
+buildRows();
+loadConfig(); loadEvents(); refreshStatus();
+setInterval(refreshStatus, 3000);
+setInterval(loadEvents, 5000);
 </script>
 </body>
 </html>
