@@ -4,7 +4,10 @@ import hmac
 import json
 import logging
 import os
+import shutil
+import socket
 import ssl
+import subprocess
 import threading
 import time
 import urllib.parse
@@ -38,6 +41,7 @@ DEFAULT_CONFIG = {
         "on_offline": True,
         "progress_step": 25,
     },
+    "camera": {"enabled": False, "snapshot": True, "clip": True, "clip_seconds": 5},
 }
 
 STATE_TEXT = {
@@ -135,15 +139,20 @@ def dingtalk_send(title, text, force=False):
         return False, f"发送失败: {e}"
 
 
-def notify(title, text, force=False):
-    with lock:
-        enabled = config["notify"]["enabled"]
-    ok, msg = dingtalk_send(title, text, force=force)
-    if force or enabled:
-        add_event("notify" if ok else "error", f"【{title}】{msg}")
-    else:
-        add_event("info", f"【{title}】通知已停用，未推送")
-    return ok, msg
+def notify(title, text, force=False, with_media=False):
+    def run():
+        with lock:
+            enabled = config["notify"]["enabled"]
+            cam_enabled = config["camera"]["enabled"]
+        if with_media and cam_enabled and not force:
+            text = attach_media(title, text)
+        ok, msg = dingtalk_send(title, text, force=force)
+        if force or enabled:
+            add_event("notify" if ok else "error", f"【{title}】{msg}")
+        else:
+            add_event("info", f"【{title}】通知已停用，未推送")
+
+    threading.Thread(target=run, daemon=True).start()
 
 
 def fmt_minutes(m):
@@ -159,6 +168,113 @@ def fmt_minutes(m):
 def task_name():
     with lock:
         return status["subtask_name"] or Path(status["gcode_file"]).name or "未知任务"
+
+
+MEDIA_DIR = DATA_DIR / "media"
+EVENT_TAGS = {
+    "开始打印": "start",
+    "打印完成": "finish",
+    "打印失败": "fail",
+    "打印已暂停": "pause",
+    "打印已恢复": "resume",
+}
+
+
+def rtsp_url():
+    with lock:
+        p = dict(config["printer"])
+    code = urllib.parse.quote(p["access_code"].strip(), safe="")
+    return f"rtsp://bblp:{code}@{p['host'].strip()}:322/stream"
+
+
+def lan_base_url():
+    with lock:
+        host = config["printer"]["host"].strip()
+    if not host:
+        return ""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(2)
+        s.connect((host, 8883))
+        ip = s.getsockname()[0]
+        s.close()
+        return f"http://{ip}:{PORT}"
+    except Exception:
+        return ""
+
+
+def run_ffmpeg(out_args, out_path, timeout):
+    if not shutil.which("ffmpeg"):
+        return False
+    cmd = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+        "-rtsp_transport", "tcp", "-i", rtsp_url(), *out_args, str(out_path),
+    ]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=timeout)
+        return r.returncode == 0 and Path(out_path).exists() and Path(out_path).stat().st_size > 0
+    except Exception:
+        return False
+
+
+def grab_snapshot(tag):
+    MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    jpg = MEDIA_DIR / f"{tag}_{int(time.time())}.jpg"
+    return jpg if run_ffmpeg(["-frames:v", "1", "-q:v", "3"], jpg, timeout=12) else None
+
+
+def grab_clip(tag, seconds):
+    MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    sec = max(2, min(15, int(seconds or 5)))
+    mp4 = MEDIA_DIR / f"{tag}_{int(time.time())}.mp4"
+    ok = run_ffmpeg(
+        ["-t", str(sec), "-vf", "scale=1280:-2", "-c:v", "libx264", "-preset", "veryfast",
+         "-crf", "26", "-pix_fmt", "yuv420p", "-an", "-movflags", "+faststart"],
+        mp4, timeout=sec * 6 + 20,
+    )
+    return mp4 if ok else None
+
+
+def prune_media(keep=100):
+    try:
+        files = sorted(MEDIA_DIR.glob("*"), key=lambda f: f.stat().st_mtime, reverse=True)
+        for f in files[keep:]:
+            try:
+                f.unlink()
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
+def capture_media(tag):
+    with lock:
+        cam = dict(config["camera"])
+    if not cam["enabled"]:
+        return None, None
+    jpg = grab_snapshot(tag) if cam["snapshot"] else None
+    mp4 = grab_clip(tag, cam["clip_seconds"]) if cam["clip"] else None
+    if jpg or mp4:
+        prune_media()
+    return jpg, mp4
+
+
+def attach_media(title, text):
+    tag = EVENT_TAGS.get(title, "print")
+    jpg, mp4 = capture_media(tag)
+    if not jpg and not mp4:
+        add_event("info", f"【{title}】摄像头抓取失败，仅推送文字")
+        return text
+    base = lan_base_url()
+    if not base:
+        add_event("info", f"【{title}】无法确定 NAS 局域网地址，画面未附带")
+        return text
+    parts = [text]
+    if jpg:
+        parts.append(f"![监控画面]({base}/media/{jpg.name})")
+    if mp4:
+        parts.append(f"[查看视频]({base}/media/{mp4.name})")
+    return "\n\n".join(parts)
 
 
 class PrinterMonitor:
@@ -280,10 +396,10 @@ class PrinterMonitor:
             step = int(n.get("progress_step") or 0)
             self.last_bucket = pct // step if step > 0 else 0
             if n.get("on_start"):
-                notify("开始打印", f"**任务**：{task_name()}\n\n**进度**：{pct}%")
+                notify("开始打印", f"**任务**：{task_name()}\n\n**进度**：{pct}%", with_media=True)
 
         if gs == "RUNNING" and prev == "PAUSED" and n.get("on_resume"):
-            notify("打印已恢复", f"**任务**：{task_name()}")
+            notify("打印已恢复", f"**任务**：{task_name()}", with_media=True)
 
         if gs in ("FINISH", "SUCCEEDED"):
             with lock:
@@ -293,14 +409,14 @@ class PrinterMonitor:
                 mins = int((time.time() - start_ts) // 60)
                 dur = f"\n\n**耗时**：{fmt_minutes(mins) or '0分钟'}"
             if n.get("on_finish"):
-                notify("打印完成", f"**任务**：{task_name()}{dur}")
+                notify("打印完成", f"**任务**：{task_name()}{dur}", with_media=True)
         elif gs == "FAILED":
             with lock:
                 err = status["error_code"]
             if n.get("on_failed"):
-                notify("打印失败", f"**任务**：{task_name()}\n\n**错误码**：{err or '未知'}")
+                notify("打印失败", f"**任务**：{task_name()}\n\n**错误码**：{err or '未知'}", with_media=True)
         elif gs == "PAUSED" and prev != "PAUSED" and n.get("on_pause"):
-            notify("打印已暂停", f"**任务**：{task_name()}")
+            notify("打印已暂停", f"**任务**：{task_name()}", with_media=True)
 
         if gs == "RUNNING":
             step = int(n.get("progress_step") or 0)
@@ -308,7 +424,7 @@ class PrinterMonitor:
                 b = pct // step
                 if b > self.last_bucket:
                     self.last_bucket = b
-                    notify(f"打印进度 {b * step}%", f"**任务**：{task_name()}\n\n**剩余时间**：{rt or '未知'}")
+                    notify(f"打印进度 {b * step}%", f"**任务**：{task_name()}\n\n**剩余时间**：{rt or '未知'}", with_media=True)
 
 
 monitor = PrinterMonitor()
@@ -344,6 +460,7 @@ def api_get_config():
             "secret_set": bool(d["secret"].strip()),
         },
         "notify": cfg["notify"],
+        "camera": cfg["camera"],
     }
 
 
@@ -377,6 +494,15 @@ async def api_post_config(req: Request):
                 cur["notify"][k] = max(0, min(100, int(nt[k])))
             except (TypeError, ValueError):
                 pass
+    cm = body.get("camera") or {}
+    for k in ("enabled", "snapshot", "clip"):
+        if k in cm:
+            cur["camera"][k] = bool(cm[k])
+    if "clip_seconds" in cm:
+        try:
+            cur["camera"]["clip_seconds"] = max(2, min(15, int(cm["clip_seconds"])))
+        except (TypeError, ValueError):
+            pass
     with lock:
         config = cur
         save_config()
@@ -469,6 +595,29 @@ async def api_test_printer(req: Request):
 def api_test_dingtalk():
     ok, msg = dingtalk_send("测试消息", "这是拓竹打印机监控服务发出的测试消息。", force=True)
     return {"ok": ok, "msg": msg}
+
+
+@app.get("/media/{name}")
+def api_media(name: str):
+    f = MEDIA_DIR / Path(name).name
+    if f.parent != MEDIA_DIR or not f.is_file():
+        raise HTTPException(status_code=404)
+    return FileResponse(f)
+
+
+@app.post("/api/test/camera")
+def api_test_camera():
+    with lock:
+        p = dict(config["printer"])
+    if not (p["host"].strip() and p["access_code"].strip()):
+        return {"ok": False, "msg": "请先保存打印机 IP 和访问码"}
+    jpg = grab_snapshot("test")
+    if not jpg:
+        return {"ok": False, "msg": "抓图失败：打印机可能不支持 RTSP（X1 全系支持，P1/A1 需较新固件且开启局域网模式）"}
+    base = lan_base_url()
+    if not base:
+        return {"ok": False, "msg": "抓图成功，但无法确定 NAS 局域网地址，消息中无法引用"}
+    return {"ok": True, "msg": "抓图成功，这就是钉钉消息里内嵌的画面", "url": f"{base}/media/{jpg.name}"}
 
 
 if __name__ == "__main__":

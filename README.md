@@ -1,4 +1,4 @@
-# 拓竹打印机钉钉监控 (bambu-dingtalk-monitor)
+# webhook-p2s — 拓竹打印机钉钉监控
 
 轻量级拓竹（Bambu Lab）打印机局域网监控服务：通过打印机本地 MQTT 接口实时获取打印状态，将开始 / 完成 / 失败 / 暂停 / 进度等事件推送到钉钉群机器人。自带 Web 配置页，Docker 一键部署，无需注册云服务、数据不出局域网（推送除外）。
 
@@ -6,6 +6,7 @@
 
 - **Web 配置页**：打印机 IP / 序列号 / 访问码、钉钉 Webhook / 加签密钥 / 关键词，全部在页面上填写；密钥类配置脱敏显示、留空保持不变
 - **实时状态**：打印进度条、层数、剩余时间、喷嘴 / 热床温度、任务文件名、已用时
+- **摄像头画面**：推送时自动抓取打印机 RTSP 流，快照图直接内嵌在钉钉消息中，并附带 N 秒短视频链接（2–15 秒可调）
 - **事件推送（可按需勾选）**：开始打印 / 打印完成 / 打印失败 / 暂停 / 恢复 / 打印中离线 / 进度节点（每 N% 推一次）
 - **连通性测试**：一键测试打印机 MQTT 连接、一键测试钉钉推送
 - **事件日志**：最近 50 条推送与连接事件
@@ -14,8 +15,8 @@
 ## 快速开始
 
 ```bash
-git clone https://github.com/Chris-Lzy/bambu-dingtalk-monitor.git
-cd bambu-dingtalk-monitor
+git clone https://github.com/Chris-Lzy/webhook-p2s.git
+cd webhook-p2s
 docker compose up -d --build
 ```
 
@@ -39,6 +40,15 @@ docker compose up -d --build
 | 自定义关键词 | 填入关键词，推送时会自动加在消息标题前 |
 | IP 白名单 | 把 NAS 的内网 IP 加入白名单 |
 
+### 摄像头画面
+
+推送时可附带打印机摄像头画面（快照内嵌 + 短视频链接）：
+
+- 需要打印机开启局域网模式且固件支持 RTSP（X1 全系支持；P1 / A1 系列需较新固件）
+- 快照与视频保存在 NAS 的 `data/media/` 下，由服务托管，链接形如 `http://NAS的IP:8787/media/xxx.jpg`
+- **群成员与 NAS 在同一局域网时**才能看到图片和打开视频；外网访问不到（可自行配合内网穿透解决）
+- 页面上的「测试摄像头抓图」按钮可以直接验证并预览
+
 ### 通知规则
 
 | 开关 | 默认 | 说明 |
@@ -60,11 +70,11 @@ docker compose up -d --build
 ## 目录结构
 
 ```
-├── app.py               # 服务主体（FastAPI + paho-mqtt + 钉钉推送）
+├── app.py               # 服务主体（FastAPI + paho-mqtt + 钉钉推送 + RTSP 抓流）
 ├── static/index.html    # Web 配置与状态页
-├── Dockerfile
+├── Dockerfile           # 内含 ffmpeg，用于摄像头抓图 / 截视频
 ├── docker-compose.yml
-└── data/                # 运行时生成，保存 config.json
+└── data/                # 运行时生成，保存 config.json 与 media/ 画面文件
 ```
 
 ## License

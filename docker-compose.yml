@@ -1,8 +1,8 @@
 services:
-  bambu-dingtalk-monitor:
+  webhook-p2s:
     build: .
-    image: bambu-dingtalk-monitor:latest
-    container_name: bambu-dingtalk-monitor
+    image: webhook-p2s:latest
+    container_name: webhook-p2s
     restart: unless-stopped
     ports:
       - "8787:8787"

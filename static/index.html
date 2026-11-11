@@ -88,6 +88,14 @@
     <input type="password" id="f-secret" placeholder="">
     <label>消息关键词（安全设置为“自定义关键词”时填写，会自动加在消息标题前）</label>
     <input type="text" id="f-keyword" placeholder="如：打印">
+    <h2 style="margin-top:22px">摄像头画面（RTSP，需开启局域网模式；X1 全系支持，P1/A1 需较新固件）</h2>
+    <div class="checks">
+      <label><input type="checkbox" id="c-enabled"> 推送时附带画面</label>
+      <label><input type="checkbox" id="c-snap"> 内嵌快照图</label>
+      <label><input type="checkbox" id="c-clip"> 附带视频链接</label>
+      <label>视频 <input type="text" id="c-sec" style="width:44px;text-align:center;padding:4px"> 秒（2–15）</label>
+    </div>
+    <div class="hint">图片和视频保存在 NAS 上，通过 http://NAS的IP:8787 访问——群成员与 NAS 同一局域网时可查看，外网打不开。</div>
     <h2 style="margin-top:22px">通知规则</h2>
     <div class="checks">
       <label><input type="checkbox" id="n-enabled"> 通知总开关</label>
@@ -104,8 +112,12 @@
       <button class="pri" id="b-save">保存配置</button>
       <button id="b-test-printer">测试打印机连接</button>
       <button id="b-test-ding">测试钉钉推送</button>
+      <button id="b-test-cam">测试摄像头抓图</button>
     </div>
     <div class="hint">密钥类输入框留空表示保持已保存的值不变。保存后监控自动重连，约 10 秒内生效。</div>
+    <div id="cam-box" hidden style="margin-top:14px">
+      <img id="cam-img" style="max-width:100%;border-radius:8px;border:1px solid var(--bd)" alt="摄像头测试画面">
+    </div>
   </section>
 
   <section class="card">
@@ -166,6 +178,10 @@ async function loadConfig(){
     $('#f-webhook').placeholder = c.dingtalk.webhook_set ? '已配置，留空保持不变' : 'https://oapi.dingtalk.com/robot/send?access_token=...';
     $('#f-secret').placeholder = c.dingtalk.secret_set ? '已配置，留空保持不变' : 'SEC...';
     $('#f-keyword').value = c.dingtalk.keyword;
+    $('#c-enabled').checked = c.camera.enabled;
+    $('#c-snap').checked = c.camera.snapshot;
+    $('#c-clip').checked = c.camera.clip;
+    $('#c-sec').value = c.camera.clip_seconds || 5;
     $('#n-enabled').checked = c.notify.enabled;
     $('#n-start').checked = c.notify.on_start;
     $('#n-finish').checked = c.notify.on_finish;
@@ -188,6 +204,10 @@ async function saveConfig(){
       on_pause: $('#n-pause').checked, on_resume: $('#n-resume').checked,
       on_offline: $('#n-offline').checked,
       progress_step: $('#n-step').checked ? (parseInt($('#n-stepv').value) || 25) : 0
+    },
+    camera: {
+      enabled: $('#c-enabled').checked, snapshot: $('#c-snap').checked,
+      clip: $('#c-clip').checked, clip_seconds: parseInt($('#c-sec').value) || 5
     }
   };
   const btn = $('#b-save'); btn.disabled = true;
@@ -231,9 +251,23 @@ async function loadEvents(){
   }catch(e){}
 }
 
+async function testCam(){
+  const btn = $('#b-test-cam'); btn.disabled = true; btn.textContent = '抓图中...';
+  try{
+    const r = await jpost('/api/test/camera', {});
+    toast(r.msg, r.ok ? 'ok' : 'err');
+    if (r.ok && r.url){
+      $('#cam-img').src = r.url + '?t=' + Date.now();
+      $('#cam-box').hidden = false;
+    }
+  }catch(e){ toast('测试失败：' + e, 'err'); }
+  btn.disabled = false; btn.textContent = '测试摄像头抓图';
+}
+
 $('#b-save').onclick = saveConfig;
 $('#b-test-printer').onclick = testPrinter;
 $('#b-test-ding').onclick = testDing;
+$('#b-test-cam').onclick = testCam;
 refreshStatus(); setInterval(refreshStatus, 3000);
 loadConfig(); loadEvents(); setInterval(loadEvents, 5000);
 </script>
