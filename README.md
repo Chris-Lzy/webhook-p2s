@@ -14,7 +14,7 @@
 ## 快速开始
 
 ```bash
-git clone https://github.com/liuzy-chris/bambu-dingtalk-monitor.git
+git clone https://github.com/Chris-Lzy/bambu-dingtalk-monitor.git
 cd bambu-dingtalk-monitor
 docker compose up -d --build
 ```
