@@ -7,6 +7,7 @@ services:
     ports:
       - "8787:8787"
     environment:
+      # 推送时间段按容器本地时区计算；镜像默认也是 Asia/Shanghai
       - TZ=Asia/Shanghai
     volumes:
       - ./data:/app/data
