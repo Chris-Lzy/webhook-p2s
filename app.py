@@ -13,22 +13,27 @@ import time
 import urllib.parse
 from collections import deque
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 import paho.mqtt.client as mqtt
 import requests
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("monitor")
+
+__version__ = "1.1.0"
 
 PORT = int(os.environ.get("PORT", "8787"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", str(Path(__file__).parent / "data")))
 CONFIG_PATH = DATA_DIR / "config.json"
 MEDIA_DIR = DATA_DIR / "media"
 MAX_PRINTERS = 20
+MAX_WINDOWS = 8
+WINDOW_EVENTS = ("start", "finish", "failed", "pause", "resume", "offline", "progress")
 
 STATE_TEXT = {
     "IDLE": "空闲",
@@ -64,6 +69,7 @@ DEFAULT_CONFIG = {
         "on_resume": False,
         "on_offline": True,
         "progress_step": 25,
+        "windows": [],
     },
     "camera": {"enabled": False, "snapshot": True, "clip": True, "clip_seconds": 5},
 }
@@ -103,6 +109,155 @@ def deep_merge(dst, src):
             dst[k] = v
 
 
+def server_tz_label():
+    tz = os.environ.get("TZ", "").strip()
+    if tz:
+        return tz
+    now = datetime.now().astimezone()
+    key = getattr(now.tzinfo, "key", None)
+    if key:
+        return key
+    offset = now.strftime("%z")
+    if len(offset) == 5:
+        sign, hh, mm = offset[0], offset[1:3], offset[3:]
+        if hh == "00" and mm == "00":
+            return "UTC"
+        return f"UTC{sign}{hh}:{mm}"
+    return "本地时区"
+
+
+def canonicalize_hhmm(value):
+    if not isinstance(value, str):
+        return None
+    parts = value.strip().replace("：", ":").split(":")
+    if len(parts) not in (2, 3):
+        return None
+    try:
+        hour, minute = int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    return f"{hour:02d}:{minute:02d}"
+
+
+def parse_hhmm(value):
+    text = canonicalize_hhmm(value)
+    if not text:
+        return None
+    hour, minute = text.split(":")
+    return int(hour) * 60 + int(minute)
+
+
+def minutes_in_window(now_min, start_min, end_min):
+    # 起止相同视为全天。其余含首尾分钟；跨午夜则覆盖 start→24:00 以及 00:00→end。
+    if start_min == end_min:
+        return True
+    if start_min < end_min:
+        return start_min <= now_min <= end_min
+    return now_min >= start_min or now_min <= end_min
+
+
+def window_weekdays(window):
+    days = window.get("weekdays")
+    if days is None:
+        return set(range(7))
+    if not isinstance(days, list):
+        return set()
+    out = set()
+    for day in days:
+        try:
+            number = int(day)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= number <= 6:
+            out.add(number)
+    return out
+
+
+def schedule_allows(windows, event_key, now=None):
+    """是否允许推送该事件。
+
+    未配置任何时间段时保持原行为（允许）。配置之后，只要有一个已启用的时段
+    覆盖当前本地时间、星期，且勾选了该事件，就允许；多个时段取并集，由调用方只发一次。
+    """
+    if not windows:
+        return True
+    if now is None:
+        now = datetime.now().astimezone()
+    elif now.tzinfo is not None:
+        now = now.astimezone()
+    now_min = now.hour * 60 + now.minute
+    weekday = now.weekday()
+    for window in windows:
+        if not isinstance(window, dict) or not window.get("enabled", True):
+            continue
+        start = parse_hhmm(window.get("start", ""))
+        end = parse_hhmm(window.get("end", ""))
+        if start is None or end is None:
+            continue
+        if weekday not in window_weekdays(window):
+            continue
+        if not minutes_in_window(now_min, start, end):
+            continue
+        events = window.get("events")
+        if isinstance(events, dict) and events.get(event_key):
+            return True
+    return False
+
+
+def push_gate(enabled, windows, event_key, force=False, now=None):
+    """通知总开关优先于时间段。force 用于测试推送，忽略两者。"""
+    if force:
+        return "send"
+    if not enabled:
+        return "disabled"
+    if not schedule_allows(windows, event_key, now=now):
+        return "window"
+    return "send"
+
+
+def normalize_windows(raw, strict=False):
+    if raw is None:
+        return [], None
+    if not isinstance(raw, list):
+        if strict:
+            return [], "推送时间段格式不正确"
+        return [], None
+    if strict and len(raw) > MAX_WINDOWS:
+        return [], f"最多添加 {MAX_WINDOWS} 个时间段"
+    out = []
+    for item in raw[:MAX_WINDOWS]:
+        if not isinstance(item, dict):
+            if strict:
+                return [], "推送时间段格式不正确"
+            continue
+        start = canonicalize_hhmm(str(item.get("start", "")))
+        end = canonicalize_hhmm(str(item.get("end", "")))
+        if start is None or end is None:
+            if strict:
+                return [], "时间段的开始和结束须为 24 小时制 HH:MM"
+            continue
+        if "weekdays" not in item or item.get("weekdays") is None:
+            days = list(range(7))
+        else:
+            days = sorted(window_weekdays({"weekdays": item.get("weekdays")}))
+        if isinstance(item.get("events"), dict):
+            events = {key: bool(item["events"].get(key, False)) for key in WINDOW_EVENTS}
+        elif strict:
+            return [], "时间段需要选择推送事件"
+        else:
+            events = {key: True for key in WINDOW_EVENTS}
+        out.append({
+            "enabled": bool(item.get("enabled", True)),
+            "start": start,
+            "end": end,
+            "weekdays": days,
+            "events": events,
+        })
+    return out, None
+
+
 def load_config():
     global config
     if not CONFIG_PATH.exists():
@@ -130,6 +285,11 @@ def load_config():
         if not p["name"]:
             p["name"] = f"P2S_{i + 1}"
         p["enabled"] = bool(item.get("enabled", legacy)) and bool(p["host"] and p["sn"] and p["access_code"])
+    saved_windows = cfg["notify"].get("windows") or []
+    cleaned, _ = normalize_windows(saved_windows, strict=False)
+    if isinstance(saved_windows, list) and len(cleaned) != len(saved_windows):
+        log.warning("已忽略无效的推送时间段")
+    cfg["notify"]["windows"] = cleaned
     config = cfg
 
 
@@ -181,19 +341,26 @@ def dingtalk_send(title, text, force=False):
         return False, f"发送失败: {e}"
 
 
-def notify(pname, title, text, tag="print", with_media=False, printer_index=None, force=False):
+def notify(pname, title, text, tag="print", event=None, with_media=False, printer_index=None, force=False):
     def run():
         with lock:
             enabled = config["notify"]["enabled"]
+            windows = list(config["notify"].get("windows") or [])
             cam_enabled = config["camera"]["enabled"]
         full_title = f"{pname} {title}"
-        if with_media and cam_enabled and not force and printer_index is not None:
-            text = attach_media(printer_index, tag, text)
-        ok, msg = dingtalk_send(full_title, text, force=force)
-        if force or enabled:
-            add_event("notify" if ok else "error", f"【{full_title}】{msg}")
-        else:
+        gate = push_gate(enabled, windows, event, force=force)
+        if gate == "disabled":
             add_event("info", f"【{full_title}】通知已停用，未推送")
+            return
+        if gate == "window":
+            add_event("skip", f"【{full_title}】不在推送时间段内，已跳过")
+            log.info("%s 不在推送时间段内，已跳过", full_title)
+            return
+        body = text
+        if with_media and cam_enabled and not force and printer_index is not None:
+            body = attach_media(printer_index, tag, body)
+        ok, msg = dingtalk_send(full_title, body, force=force)
+        add_event("notify" if ok else "error", f"【{full_title}】{msg}")
 
     threading.Thread(target=run, daemon=True).start()
 
@@ -382,7 +549,7 @@ class PrinterMonitor:
         add_event("error", f"{p['name']} 连接断开，将自动重连")
         if printing and do_notify:
             notify(p["name"], "打印机离线", "MQTT 连接断开，打印可能中断，服务将自动重连。",
-                   tag="offline", printer_index=self.index)
+                   tag="offline", event="offline", printer_index=self.index)
 
     def _on_message(self, client, userdata, msg):
         try:
@@ -441,11 +608,11 @@ class PrinterMonitor:
             self.last_bucket = pct // step if step > 0 else 0
             if n.get("on_start"):
                 notify(name, "开始打印", f"**任务**：{task_name()}\n\n**进度**：{pct}%",
-                       tag="start", with_media=True, printer_index=self.index)
+                       tag="start", event="start", with_media=True, printer_index=self.index)
 
         if gs == "RUNNING" and prev == "PAUSED" and n.get("on_resume"):
             notify(name, "打印已恢复", f"**任务**：{task_name()}",
-                   tag="resume", with_media=True, printer_index=self.index)
+                   tag="resume", event="resume", with_media=True, printer_index=self.index)
 
         if gs in ("FINISH", "SUCCEEDED"):
             with lock:
@@ -456,16 +623,16 @@ class PrinterMonitor:
                 dur = f"\n\n**耗时**：{fmt_minutes(mins) or '0分钟'}"
             if n.get("on_finish"):
                 notify(name, "打印完成", f"**任务**：{task_name()}{dur}",
-                       tag="finish", with_media=True, printer_index=self.index)
+                       tag="finish", event="finish", with_media=True, printer_index=self.index)
         elif gs == "FAILED":
             with lock:
                 err = s["error_code"]
             if n.get("on_failed"):
                 notify(name, "打印失败", f"**任务**：{task_name()}\n\n**错误码**：{err or '未知'}",
-                       tag="fail", with_media=True, printer_index=self.index)
+                       tag="fail", event="failed", with_media=True, printer_index=self.index)
         elif gs == "PAUSED" and prev != "PAUSED" and n.get("on_pause"):
             notify(name, "打印已暂停", f"**任务**：{task_name()}",
-                   tag="pause", with_media=True, printer_index=self.index)
+                   tag="pause", event="pause", with_media=True, printer_index=self.index)
 
         if gs == "RUNNING":
             step = int(n.get("progress_step") or 0)
@@ -475,7 +642,7 @@ class PrinterMonitor:
                     self.last_bucket = b
                     notify(name, f"打印进度 {b * step}%",
                            f"**任务**：{task_name()}\n\n**剩余时间**：{rt or '未知'}",
-                           tag="print", with_media=True, printer_index=self.index)
+                           tag="print", event="progress", with_media=True, printer_index=self.index)
 
 
 monitors = [PrinterMonitor(i) for i in range(MAX_PRINTERS)]
@@ -500,7 +667,8 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/")
 def index():
-    return FileResponse(Path(__file__).parent / "static" / "index.html")
+    page = (Path(__file__).parent / "static" / "index.html").read_text("utf-8")
+    return HTMLResponse(page.replace("{{APP_VERSION}}", __version__))
 
 
 @app.get("/api/config")
@@ -529,6 +697,8 @@ def api_get_config():
         },
         "notify": cfg["notify"],
         "camera": cfg["camera"],
+        "version": __version__,
+        "timezone": server_tz_label(),
     }
 
 
@@ -559,7 +729,7 @@ async def api_post_config(req: Request):
         cur["dingtalk"]["secret"] = str(dt["secret"]).strip()
     nt = body.get("notify") or {}
     for k, v in cur["notify"].items():
-        if k not in nt:
+        if k not in nt or k == "windows":
             continue
         if isinstance(v, bool):
             cur["notify"][k] = bool(nt[k])
@@ -568,6 +738,11 @@ async def api_post_config(req: Request):
                 cur["notify"][k] = max(0, min(100, int(nt[k])))
             except (TypeError, ValueError):
                 pass
+    if "windows" in nt:
+        windows, err = normalize_windows(nt.get("windows"), strict=True)
+        if err:
+            return {"ok": False, "msg": err}
+        cur["notify"]["windows"] = windows
     cm = body.get("camera") or {}
     for k in ("enabled", "snapshot", "clip"):
         if k in cm:
@@ -644,7 +819,13 @@ def api_status():
             })
         enabled_count = sum(1 for p in config["printers"] if p["enabled"])
     online_count = sum(1 for x in out if x["online"])
-    return {"printers": out, "enabled_count": enabled_count, "online_count": online_count}
+    return {
+        "printers": out,
+        "enabled_count": enabled_count,
+        "online_count": online_count,
+        "version": __version__,
+        "timezone": server_tz_label(),
+    }
 
 
 @app.get("/api/events")

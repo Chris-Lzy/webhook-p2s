@@ -69,7 +69,7 @@
   #config-card .sec{padding:15px 0;border-top:1px solid var(--bd2)}
   #config-card .sec:first-child{padding-top:0;border-top:none}
   .sec h2{font-size:13px;font-weight:600;margin-bottom:2px}
-  .sec .sub{font-size:11px;color:var(--mut);margin-bottom:11px}
+  .sec .sub{font-size:11px;color:var(--mut);margin-bottom:11px;line-height:1.65}
   label{display:block;font-size:11.5px;color:var(--mut);margin:10px 0 5px}
   #config-card input[type=text],#config-card input[type=password]{width:100%;padding:8px 10px;border:1px solid var(--bd);border-radius:8px;font-size:12.5px;background:#f8fbf9;font-family:inherit}
   #config-card input:focus{outline:none;background:#fff;border-color:var(--g);box-shadow:0 0 0 3px rgba(0,174,66,.1)}
@@ -80,6 +80,20 @@
   .checks .num{white-space:nowrap;gap:4px}
   #config-card .checks .num input[type=text]{width:40px;text-align:center;padding:3px 4px;border-radius:6px;border:1px solid var(--bd);background:#fff;font-size:12px;margin:0 2px}
   .checks .span2{grid-column:span 2}
+  .win{border:1px solid var(--bd2);background:#f8fbf9;border-radius:10px;padding:10px;margin:0 0 10px}
+  .win-top{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  #config-card .win-en{display:flex;align-items:center;gap:6px;margin:0;font-size:12px;color:var(--tx);cursor:pointer}
+  #config-card .win-en input{width:14px;height:14px;accent-color:var(--g);flex:0 0 auto}
+  #config-card input.win-start,#config-card input.win-end{width:74px;flex:0 0 auto;text-align:center;padding:6px 4px;background:#fff}
+  .win-to{color:var(--mut);font-size:12px}
+  .win-top .mini{margin-left:auto}
+  .win-days{display:flex;gap:4px;margin-top:8px}
+  .win-days .day{padding:3px 0;width:28px;text-align:center;border-radius:7px;font-size:11px;background:#fff}
+  .win-days .day.on{background:var(--g);border-color:var(--g);color:#fff}
+  .win-ev{margin-top:8px}
+  .win-ev label{padding:5px 8px;font-size:11.5px}
+  #win-add{width:100%;margin-top:2px}
+  #win-empty{margin-bottom:8px}
   .actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px}
   .hint{font-size:11px;color:var(--mut);line-height:1.7;margin-top:10px;padding-top:10px;border-top:1px dashed var(--bd)}
 
@@ -113,7 +127,7 @@
 </head>
 <body>
 <header>
-  <h1>拓竹打印机监控<span class="tag">webhook-p2s</span></h1>
+  <h1>拓竹打印机监控<span class="tag">webhook-p2s</span><span class="tag" id="app-ver">v{{APP_VERSION}}</span></h1>
   <span class="chipstat"><i class="dot" id="st-dot"></i><span id="st-online">加载中</span></span>
 </header>
 <main>
@@ -163,6 +177,7 @@
 
     <div class="sec">
       <h2>通知规则</h2>
+      <div class="sub">总开关关闭时全部不推送。下面的勾选是事件总闸，未勾选的类型不会推送。未添加时间段时，已勾选的事件全天推送。</div>
       <div class="checks">
         <label><input type="checkbox" id="n-enabled"> 通知总开关</label>
         <label><input type="checkbox" id="n-start"> 开始打印</label>
@@ -176,11 +191,19 @@
       </div>
     </div>
 
+    <div class="sec">
+      <h2>推送时间段</h2>
+      <div class="sub">添加后须同时满足：总开关开启、上方勾选了该事件、当前时间落在某个已启用时段内、且该时段也勾选了该事件。多个时段取并集，同一次事件只推一条；时段全部停用时不会推送。全部删除即恢复全天推送。跨午夜（如 22:00–07:00）有效，星期按当前时刻计算；开始与结束相同表示全天；不选星期则该时段不生效。错过的事件不会补推。<span id="tz-note"></span></div>
+      <div class="trace" id="win-empty">当前未添加时间段，按上方规则全天推送。</div>
+      <div id="win-list"></div>
+      <button type="button" id="win-add" class="mini">添加时间段</button>
+    </div>
+
     <div class="actions">
       <button class="pri" id="b-save">保存全部</button>
       <button id="b-test-ding">测试钉钉推送</button>
     </div>
-    <div class="hint">密钥输入框留空表示保持已保存的值。图片与视频经 http://NAS的IP:8787 访问，群成员与 NAS 同一局域网时可查看。</div>
+    <div class="hint">密钥输入框留空表示保持已保存的值。测试钉钉推送不受总开关和时间段限制。图片与视频经 http://NAS的IP:8787 访问，群成员与 NAS 同一局域网时可查看。</div>
   </section>
 
   <section class="card" id="log-card">
@@ -197,6 +220,13 @@
 </div>
 <script>
 const MAX = 20;
+const MAX_WINDOWS = 8;
+const WEEKDAYS = ['一','二','三','四','五','六','日'];
+const WIN_EVENTS = [
+  ['start','开始','开始打印'],['finish','完成','打印完成'],['failed','失败','打印失败'],
+  ['pause','暂停','暂停'],['resume','恢复','恢复'],['offline','离线','打印中离线'],
+  ['progress','进度','进度节点']
+];
 const $ = s => document.querySelector(s);
 let toastTimer, camTimer;
 const rows = [];
@@ -273,7 +303,112 @@ function renderToggle(row){
   row.btnToggle.className = 'mini ' + (row.enabled ? 'stop' : 'start');
 }
 
+function syncWindows(){
+  const n = $('#win-list').children.length;
+  $('#win-empty').hidden = n > 0;
+  const add = $('#win-add');
+  add.disabled = n >= MAX_WINDOWS;
+  add.textContent = n >= MAX_WINDOWS ? `最多 ${MAX_WINDOWS} 个时间段` : '添加时间段';
+}
+
+function timeInput(cls, value, ph){
+  const input = el('input', cls);
+  input.type = 'text';
+  input.placeholder = ph;
+  input.value = value || '';
+  input.maxLength = 5;
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  input.inputMode = 'numeric';
+  input.title = '24 小时制，例如 ' + ph;
+  return input;
+}
+function validClock(value){
+  const m = /^(\d{1,2}):(\d{2})$/.exec((value || '').trim());
+  if (!m) return false;
+  const hour = Number(m[1]), minute = Number(m[2]);
+  return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59;
+}
+
+function windowEl(w){
+  const root = el('div', 'win');
+  const top = el('div', 'win-top');
+  const en = el('label', 'win-en');
+  const enabled = el('input');
+  enabled.type = 'checkbox';
+  enabled.checked = w.enabled !== false;
+  en.append(enabled, document.createTextNode('启用'));
+  const start = timeInput('win-start', w.start, '22:00');
+  const end = timeInput('win-end', w.end, '07:00');
+  const del = el('button', 'mini', '删除');
+  del.type = 'button';
+  del.onclick = () => { root.remove(); syncWindows(); };
+  top.append(en, start, el('span', 'win-to', '至'), end, del);
+
+  const days = el('div', 'win-days');
+  const selected = new Set((w.weekdays || [0,1,2,3,4,5,6]).map(Number));
+  WEEKDAYS.forEach((name, i) => {
+    const b = el('button', 'day' + (selected.has(i) ? ' on' : ''), name);
+    b.type = 'button';
+    b.dataset.d = String(i);
+    b.title = '周' + name;
+    b.onclick = () => b.classList.toggle('on');
+    days.append(b);
+  });
+
+  const evs = el('div', 'checks win-ev');
+  const ev = w.events || {};
+  WIN_EVENTS.forEach(([k, label, tip]) => {
+    const lab = el('label');
+    const c = el('input');
+    c.type = 'checkbox';
+    c.dataset.k = k;
+    c.checked = !!ev[k];
+    lab.title = tip;
+    lab.append(c, document.createTextNode(label));
+    evs.append(lab);
+  });
+  root.append(top, days, evs);
+  return root;
+}
+
+function renderWindows(list){
+  const box = $('#win-list');
+  box.replaceChildren();
+  (list || []).forEach(w => box.append(windowEl(w)));
+  syncWindows();
+}
+
+function defaultWindow(){
+  const checked = {
+    start: $('#n-start').checked, finish: $('#n-finish').checked, failed: $('#n-failed').checked,
+    pause: $('#n-pause').checked, resume: $('#n-resume').checked, offline: $('#n-offline').checked,
+    progress: $('#n-step').checked
+  };
+  return {enabled:true, start:'08:00', end:'22:00', weekdays:[0,1,2,3,4,5,6], events:checked};
+}
+
+function collectWindows(){
+  const windows = [];
+  for (const box of $('#win-list').querySelectorAll('.win')){
+    const start = box.querySelector('.win-start').value.trim();
+    const end = box.querySelector('.win-end').value.trim();
+    if (!validClock(start) || !validClock(end)) return {error: '时间请按 24 小时制填写，例如 22:00'};
+    const events = {};
+    box.querySelectorAll('.win-ev input').forEach(i => { events[i.dataset.k] = i.checked; });
+    windows.push({
+      enabled: box.querySelector('.win-en input').checked,
+      start, end,
+      weekdays: [...box.querySelectorAll('.win-days .day.on')].map(b => Number(b.dataset.d)),
+      events
+    });
+  }
+  return {windows};
+}
+
 function printerBody(){
+  const collected = collectWindows();
+  if (collected.error) return collected;
   return {
     printers: rows.map(r => ({
       name: r.nameIn.value.trim() || `P2S_${r.i+1}`,
@@ -287,7 +422,8 @@ function printerBody(){
       on_finish: $('#n-finish').checked, on_failed: $('#n-failed').checked,
       on_pause: $('#n-pause').checked, on_resume: $('#n-resume').checked,
       on_offline: $('#n-offline').checked,
-      progress_step: $('#n-step').checked ? (parseInt($('#n-stepv').value) || 25) : 0
+      progress_step: $('#n-step').checked ? (parseInt($('#n-stepv').value) || 25) : 0,
+      windows: collected.windows
     },
     camera: {
       enabled: $('#c-enabled').checked, snapshot: $('#c-snap').checked,
@@ -297,10 +433,12 @@ function printerBody(){
 }
 
 async function saveAll(silent){
+  const body = printerBody();
+  if (body.error){ toast(body.error, 'err'); return false; }
   const btn = $('#b-save');
   btn.disabled = true;
   try{
-    const r = await jpost('/api/config', printerBody());
+    const r = await jpost('/api/config', body);
     if (r.ok){
       rows.forEach(x => { x.codeIn.value = ''; });
       if (!silent) toast(r.msg || '已保存', 'ok');
@@ -386,6 +524,9 @@ async function loadConfig(){
     $('#n-offline').checked = c.notify.on_offline;
     $('#n-step').checked = c.notify.progress_step > 0;
     $('#n-stepv').value = c.notify.progress_step > 0 ? c.notify.progress_step : 25;
+    renderWindows(c.notify.windows || []);
+    if (c.version) $('#app-ver').textContent = 'v' + c.version;
+    $('#tz-note').textContent = c.timezone ? ` 当前服务器时区：${c.timezone}。` : '';
   }catch(e){}
 }
 
@@ -460,7 +601,7 @@ async function loadEvents(){
       const li = el('li');
       const t = el('span', 't', new Date(e.ts * 1000).toLocaleTimeString('zh-CN', {hour12: false}));
       const mark = el('span', 'm', '●');
-      mark.style.color = e.type === 'error' ? 'var(--red)' : e.type === 'notify' ? 'var(--g)' : 'var(--mut)';
+      mark.style.color = e.type === 'error' ? 'var(--red)' : e.type === 'notify' ? 'var(--g)' : e.type === 'skip' ? 'var(--amber)' : 'var(--mut)';
       li.append(t, mark, el('span', 'x', e.text));
       ul.append(li);
     });
@@ -480,6 +621,11 @@ $('#b-test-ding').onclick = async () => {
   btn.disabled = false; btn.textContent = '测试钉钉推送';
 };
 $('#cam-close').onclick = () => { $('#cam-pop').style.display = 'none'; clearTimeout(camTimer); };
+$('#win-add').onclick = () => {
+  if ($('#win-list').children.length >= MAX_WINDOWS) return;
+  $('#win-list').append(windowEl(defaultWindow()));
+  syncWindows();
+};
 
 buildRows();
 loadConfig(); loadEvents(); refreshStatus();
