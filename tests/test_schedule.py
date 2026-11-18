@@ -7,6 +7,9 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("DATA_DIR", tempfile.mkdtemp(prefix="webhook-p2s-test-"))
@@ -29,17 +32,22 @@ def window(start, end, events, weekdays=None, enabled=True):
     }
 
 
-def request(body):
+def request(body, path="/api/config"):
     payload = json.dumps(body).encode()
+    sent = False
 
     async def receive():
-        return {"type": "http.request", "body": payload, "more_body": False}
+        nonlocal sent
+        if not sent:
+            sent = True
+            return {"type": "http.request", "body": payload, "more_body": False}
+        return {"type": "http.disconnect"}
 
     scope = {
         "type": "http",
         "http_version": "1.1",
         "method": "POST",
-        "path": "/api/config",
+        "path": path,
         "headers": [(b"content-type", b"application/json")],
     }
     return Request(scope, receive)
@@ -96,7 +104,6 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(app.push_gate(True, both, "start", now=at_overlap), "send")
         self.assertFalse(app.schedule_allows(both, "start", datetime(2026, 11, 16, 13, 0)))
         self.assertTrue(app.schedule_allows(both, "finish", datetime(2026, 11, 16, 13, 0)))
-        # 交界的这一分钟两边都算命中，结果仍是一次「允许」，不会变成两次推送。
         boundary = [
             window("09:00", "13:00", {"start": True}),
             window("13:00", "18:00", {"finish": True}),
@@ -184,13 +191,14 @@ class ScheduleTests(unittest.TestCase):
         app.events.clear()
         try:
             app.config["camera"]["enabled"] = False
+            app.config["dingtalk"]["enabled"] = True
             app.config["dingtalk"]["webhook"] = "https://example.invalid/hook"
             app.config["dingtalk"]["secret"] = "keep-me"
             app.config["notify"]["enabled"] = True
             app.config["notify"]["windows"] = []
             app.notify(
                 "P2S_1", "开始打印", "正文",
-                tag="start", event="start", with_media=True, printer_index=0,
+                tag="start", event="start", with_media=True, printer_id="p_1",
             )
             self.assertEqual(len(sent), 1)
             self.assertEqual(sent[0]["title"], "P2S_1 开始打印")
@@ -201,7 +209,7 @@ class ScheduleTests(unittest.TestCase):
             app.config["notify"]["windows"] = [window("00:00", "00:00", {"finish": True})]
             app.notify(
                 "P2S_1", "开始打印", "正文",
-                tag="start", event="start", with_media=True, printer_index=0,
+                tag="start", event="start", with_media=True, printer_id="p_1",
             )
             self.assertEqual(sent, [])
             logged = list(app.events)
@@ -215,7 +223,7 @@ class ScheduleTests(unittest.TestCase):
             ]
             app.notify(
                 "P2S_1", "开始打印", "正文",
-                tag="start", event="start", with_media=True, printer_index=0,
+                tag="start", event="start", with_media=True, printer_id="p_1",
             )
             self.assertEqual(len(sent), 1)
         finally:
@@ -246,7 +254,8 @@ class ScheduleTests(unittest.TestCase):
         try:
             app.config["dingtalk"]["webhook"] = "https://example.invalid/hook"
             app.config["dingtalk"]["secret"] = "keep-me"
-            saved = asyncio.run(app.api_post_config(request({
+            loop = asyncio.new_event_loop()
+            saved = loop.run_until_complete(app.api_post_config(request({
                 "dingtalk": {"webhook": "", "secret": "", "keyword": "打印"},
                 "notify": {
                     "enabled": True,
@@ -260,6 +269,7 @@ class ScheduleTests(unittest.TestCase):
                     }],
                 },
             })))
+            loop.close()
             self.assertTrue(saved["ok"])
             self.assertEqual(app.config["dingtalk"]["secret"], "keep-me")
             self.assertEqual(app.config["dingtalk"]["webhook"], "https://example.invalid/hook")
@@ -280,14 +290,18 @@ class ScheduleTests(unittest.TestCase):
             self.assertEqual(view["notify"]["windows"][0]["end"], "07:00")
             self.assertEqual(view["version"], app.__version__)
 
-            rejected = asyncio.run(app.api_post_config(request({
+            loop2 = asyncio.new_event_loop()
+            rejected = loop2.run_until_complete(app.api_post_config(request({
                 "notify": {"windows": [{"start": "99:00", "end": "01:00", "events": {}}]},
             })))
+            loop2.close()
             self.assertFalse(rejected["ok"])
             self.assertEqual(app.config["dingtalk"]["secret"], "keep-me")
             self.assertEqual(app.config["notify"]["windows"][0]["start"], "22:00")
 
-            cleared = asyncio.run(app.api_post_config(request({"notify": {"windows": []}})))
+            loop3 = asyncio.new_event_loop()
+            cleared = loop3.run_until_complete(app.api_post_config(request({"notify": {"windows": []}})))
+            loop3.close()
             self.assertTrue(cleared["ok"])
             self.assertEqual(app.config["notify"]["windows"], [])
             self.assertEqual(app.config["dingtalk"]["secret"], "keep-me")
@@ -295,6 +309,69 @@ class ScheduleTests(unittest.TestCase):
             app.config = original
             if app.CONFIG_PATH.exists():
                 app.CONFIG_PATH.unlink()
+
+    def test_max_printers_up_to_1000(self):
+        self.assertEqual(app.MAX_PRINTERS, 1000)
+        original = json.loads(json.dumps(app.config))
+        try:
+            # 批量构造 50 台设备并保存
+            new_printers = [
+                {"id": f"p_{i}", "name": f"P2S_{i}", "host": f"192.168.1.{10+i}", "sn": f"SN_{i}", "access_code": "123", "enabled": False}
+                for i in range(1, 51)
+            ]
+            loop = asyncio.new_event_loop()
+            res = loop.run_until_complete(app.api_post_config(request({"printers": new_printers})))
+            loop.close()
+            self.assertTrue(res["ok"])
+            status = app.api_status()
+            self.assertEqual(status["total_count"], 50)
+            self.assertEqual(len(status["printers"]), 50)
+        finally:
+            app.config = original
+            if app.CONFIG_PATH.exists():
+                app.CONFIG_PATH.unlink()
+
+    def test_dynamic_add_and_delete_printer(self):
+        original = json.loads(json.dumps(app.config))
+        try:
+            loop = asyncio.new_event_loop()
+            add_res = loop.run_until_complete(app.api_add_printer(request({
+                "name": "工作室_新设备",
+                "host": "192.168.1.188",
+                "sn": "SN_NEW_001",
+                "access_code": "code888",
+                "enabled": False,
+            })))
+            loop.close()
+            self.assertTrue(add_res["ok"])
+            pid = add_res["printer"]["id"]
+            self.assertTrue(pid)
+
+            idx, p = app.find_printer_index_and_data(pid)
+            self.assertIsNotNone(p)
+            self.assertEqual(p["name"], "工作室_新设备")
+
+            del_res = app.api_delete_printer(pid)
+            self.assertTrue(del_res["ok"])
+            idx_after, p_after = app.find_printer_index_and_data(pid)
+            self.assertIsNone(p_after)
+        finally:
+            app.config = original
+            if app.CONFIG_PATH.exists():
+                app.CONFIG_PATH.unlink()
+
+    def test_multi_channel_push(self):
+        original = json.loads(json.dumps(app.config))
+        try:
+            app.config["wecom"] = {"enabled": True, "webhook": "https://qyapi.weixin.qq.com/test"}
+            app.config["feishu"] = {"enabled": True, "webhook": "https://open.feishu.cn/test", "secret": "sec"}
+            res = app.api_test_channel.__wrapped__ if hasattr(app.api_test_channel, "__wrapped__") else None
+            # 验证多渠道分发逻辑
+            chan_res = app.push_to_all_channels("测试标题", "测试内容", force=True, channel="unknown")
+            self.assertFalse(chan_res[0][0])
+            self.assertIn("未知渠道", chan_res[0][1])
+        finally:
+            app.config = original
 
 
 if __name__ == "__main__":

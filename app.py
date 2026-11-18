@@ -1,9 +1,12 @@
 import base64
+import concurrent.futures
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import os
+import re
 import shutil
 import socket
 import ssl
@@ -25,13 +28,13 @@ from fastapi.responses import FileResponse, HTMLResponse
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("monitor")
 
-__version__ = "1.1.0"
+__version__ = "2.0.0"
 
 PORT = int(os.environ.get("PORT", "8787"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", str(Path(__file__).parent / "data")))
 CONFIG_PATH = DATA_DIR / "config.json"
 MEDIA_DIR = DATA_DIR / "media"
-MAX_PRINTERS = 20
+MAX_PRINTERS = 1000
 MAX_WINDOWS = 8
 WINDOW_EVENTS = ("start", "finish", "failed", "pause", "resume", "offline", "progress")
 
@@ -46,20 +49,13 @@ STATE_TEXT = {
     "FAILED": "失败",
 }
 
-EVENT_TAGS = {
-    "开始打印": "start",
-    "打印完成": "finish",
-    "打印失败": "fail",
-    "打印已暂停": "pause",
-    "打印已恢复": "resume",
-}
-
 DEFAULT_CONFIG = {
     "printers": [
-        {"name": f"P2S_{i}", "host": "", "sn": "", "access_code": "", "enabled": False}
-        for i in range(1, MAX_PRINTERS + 1)
+        {"id": "p_1", "name": "P2S_1", "host": "", "sn": "", "access_code": "", "enabled": False}
     ],
-    "dingtalk": {"webhook": "", "secret": "", "keyword": ""},
+    "dingtalk": {"enabled": True, "webhook": "", "secret": "", "keyword": ""},
+    "wecom": {"enabled": False, "webhook": ""},
+    "feishu": {"enabled": False, "webhook": "", "secret": ""},
     "notify": {
         "enabled": True,
         "on_start": True,
@@ -76,7 +72,7 @@ DEFAULT_CONFIG = {
 
 lock = threading.RLock()
 config = json.loads(json.dumps(DEFAULT_CONFIG))
-events = deque(maxlen=50)
+events = deque(maxlen=100)
 
 
 def blank_status():
@@ -98,7 +94,8 @@ def blank_status():
     }
 
 
-statuses = [blank_status() for _ in range(MAX_PRINTERS)]
+statuses: dict[str, dict] = {}
+monitors: dict[str, "PrinterMonitor"] = {}
 
 
 def deep_merge(dst, src):
@@ -150,7 +147,6 @@ def parse_hhmm(value):
 
 
 def minutes_in_window(now_min, start_min, end_min):
-    # 起止相同视为全天。其余含首尾分钟；跨午夜则覆盖 start→24:00 以及 00:00→end。
     if start_min == end_min:
         return True
     if start_min < end_min:
@@ -176,11 +172,6 @@ def window_weekdays(window):
 
 
 def schedule_allows(windows, event_key, now=None):
-    """是否允许推送该事件。
-
-    未配置任何时间段时保持原行为（允许）。配置之后，只要有一个已启用的时段
-    覆盖当前本地时间、星期，且勾选了该事件，就允许；多个时段取并集，由调用方只发一次。
-    """
     if not windows:
         return True
     if now is None:
@@ -207,7 +198,6 @@ def schedule_allows(windows, event_key, now=None):
 
 
 def push_gate(enabled, windows, event_key, force=False, now=None):
-    """通知总开关优先于时间段。force 用于测试推送，忽略两者。"""
     if force:
         return "send"
     if not enabled:
@@ -258,9 +248,56 @@ def normalize_windows(raw, strict=False):
     return out, None
 
 
+def generate_printer_id():
+    return f"p_{int(time.time() * 1000) % 100000000}_{os.urandom(2).hex()}"
+
+
+def ensure_printer_id(p, fallback_idx=1):
+    pid = str(p.get("id") or "").strip()
+    if not pid:
+        pid = f"p_{fallback_idx}"
+    p["id"] = pid
+    return pid
+
+
+def get_printer_status(pid):
+    with lock:
+        if pid not in statuses:
+            statuses[pid] = blank_status()
+        return statuses[pid]
+
+
+def find_printer_index_and_data(identifier):
+    with lock:
+        printers = config["printers"]
+        # Try finding by ID first
+        for idx, p in enumerate(printers):
+            if str(p.get("id")) == str(identifier):
+                return idx, p
+        # Try finding by numeric index
+        try:
+            num = int(identifier)
+            if 0 <= num < len(printers):
+                return num, printers[num]
+        except (ValueError, TypeError):
+            pass
+        return None, None
+
+
+def get_monitor_for_printer(pid):
+    with lock:
+        if pid not in monitors:
+            monitors[pid] = PrinterMonitor(pid)
+        return monitors[pid]
+
+
 def load_config():
     global config
     if not CONFIG_PATH.exists():
+        with lock:
+            config = json.loads(json.dumps(DEFAULT_CONFIG))
+            ensure_printer_id(config["printers"][0], 1)
+            get_or_create_monitors()
         return
     try:
         saved = json.loads(CONFIG_PATH.read_text("utf-8"))
@@ -268,29 +305,45 @@ def load_config():
         log.warning("读取配置失败: %s", e)
         return
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
-    for sec in ("dingtalk", "notify", "camera"):
+    for sec in ("dingtalk", "wecom", "feishu", "notify", "camera"):
         if isinstance(saved.get(sec), dict):
             deep_merge(cfg[sec], saved[sec])
     items = saved.get("printers")
     legacy = isinstance(saved.get("printer"), dict)
     if not isinstance(items, list) and legacy:
         items = [saved["printer"]]
+    parsed_printers = []
+    used_ids = set()
     for i, item in enumerate(items or []):
-        if i >= MAX_PRINTERS or not isinstance(item, dict):
+        if len(parsed_printers) >= MAX_PRINTERS or not isinstance(item, dict):
             break
-        p = cfg["printers"][i]
-        for k in ("name", "host", "sn", "access_code"):
-            if item.get(k) is not None:
-                p[k] = str(item[k]).strip()
-        if not p["name"]:
-            p["name"] = f"P2S_{i + 1}"
+        pid = str(item.get("id") or "").strip()
+        if not pid or pid in used_ids:
+            pid = f"p_{i + 1}"
+        used_ids.add(pid)
+        p = {
+            "id": pid,
+            "name": str(item.get("name") or f"P2S_{i + 1}").strip(),
+            "host": str(item.get("host") or "").strip(),
+            "sn": str(item.get("sn") or "").strip(),
+            "access_code": str(item.get("access_code") or "").strip(),
+            "enabled": False,
+        }
         p["enabled"] = bool(item.get("enabled", legacy)) and bool(p["host"] and p["sn"] and p["access_code"])
+        parsed_printers.append(p)
+    if not parsed_printers:
+        parsed_printers.append({
+            "id": "p_1", "name": "P2S_1", "host": "", "sn": "", "access_code": "", "enabled": False
+        })
+    cfg["printers"] = parsed_printers
     saved_windows = cfg["notify"].get("windows") or []
     cleaned, _ = normalize_windows(saved_windows, strict=False)
     if isinstance(saved_windows, list) and len(cleaned) != len(saved_windows):
         log.warning("已忽略无效的推送时间段")
     cfg["notify"]["windows"] = cleaned
-    config = cfg
+    with lock:
+        config = cfg
+        get_or_create_monitors()
 
 
 def save_config():
@@ -300,9 +353,34 @@ def save_config():
     tmp.replace(CONFIG_PATH)
 
 
-def pcfg(index):
+def get_or_create_monitors():
     with lock:
-        return dict(config["printers"][index])
+        current_pids = set()
+        for p in config["printers"]:
+            pid = p["id"]
+            current_pids.add(pid)
+            if pid not in monitors:
+                monitors[pid] = PrinterMonitor(pid)
+            if pid not in statuses:
+                statuses[pid] = blank_status()
+        # Remove monitors of deleted printers
+        for pid in list(monitors.keys()):
+            if pid not in current_pids:
+                try:
+                    monitors[pid].stop()
+                except Exception:
+                    pass
+                del monitors[pid]
+                if pid in statuses:
+                    del statuses[pid]
+
+
+def pcfg_by_id(pid):
+    with lock:
+        for p in config["printers"]:
+            if p["id"] == pid:
+                return dict(p)
+        return {"id": pid, "name": pid, "host": "", "sn": "", "access_code": "", "enabled": False}
 
 
 def add_event(etype, text):
@@ -310,12 +388,16 @@ def add_event(etype, text):
         events.appendleft({"ts": time.time(), "type": etype, "text": text})
 
 
+# ------------------ 推送渠道支持（钉钉、企业微信、飞书） ------------------
+
 def dingtalk_send(title, text, force=False):
     with lock:
         d = dict(config["dingtalk"])
         enabled = config["notify"]["enabled"]
     if not force and not enabled:
         return False, "通知总开关已停用"
+    if not force and not d.get("enabled", True):
+        return False, "钉钉推送已停用"
     if not d["webhook"].strip():
         return False, "未配置钉钉 webhook"
     url = d["webhook"].strip()
@@ -335,13 +417,108 @@ def dingtalk_send(title, text, force=False):
         r = requests.post(url, json=body, timeout=10)
         data = r.json()
         if data.get("errcode") == 0:
-            return True, "推送成功"
+            return True, "钉钉推送成功"
         return False, f"钉钉返回错误: {data.get('errmsg', data)}"
     except Exception as e:
-        return False, f"发送失败: {e}"
+        return False, f"钉钉发送失败: {e}"
 
 
-def notify(pname, title, text, tag="print", event=None, with_media=False, printer_index=None, force=False):
+def wecom_send(title, text, force=False):
+    with lock:
+        w = dict(config.get("wecom", {}))
+        enabled = config["notify"]["enabled"]
+    if not force and not enabled:
+        return False, "通知总开关已停用"
+    if not force and not w.get("enabled", False):
+        return False, "企业微信推送已停用"
+    webhook = w.get("webhook", "").strip()
+    if not webhook:
+        return False, "未配置企业微信 webhook"
+    body = {
+        "msgtype": "markdown",
+        "markdown": {"content": f"### {title}\n\n{text}"},
+    }
+    try:
+        r = requests.post(webhook, json=body, timeout=10)
+        data = r.json()
+        if data.get("errcode") == 0:
+            return True, "企业微信推送成功"
+        return False, f"企业微信返回错误: {data.get('errmsg', data)}"
+    except Exception as e:
+        return False, f"企业微信发送失败: {e}"
+
+
+def feishu_send(title, text, force=False):
+    with lock:
+        f = dict(config.get("feishu", {}))
+        enabled = config["notify"]["enabled"]
+    if not force and not enabled:
+        return False, "通知总开关已停用"
+    if not force and not f.get("enabled", False):
+        return False, "飞书推送已停用"
+    webhook = f.get("webhook", "").strip()
+    if not webhook:
+        return False, "未配置飞书 webhook"
+    ts = str(int(time.time()))
+    body = {
+        "msg_type": "post",
+        "content": {
+            "post": {
+                "zh_cn": {
+                    "title": title,
+                    "content": [[{"tag": "text", "text": text}]],
+                }
+            }
+        },
+    }
+    secret = f.get("secret", "").strip()
+    if secret:
+        string_to_sign = f"{ts}\n{secret}"
+        sign = base64.b64encode(
+            hmac.new(string_to_sign.encode("utf-8"), digestmod=hashlib.sha256).digest()
+        ).decode("utf-8")
+        body["timestamp"] = ts
+        body["sign"] = sign
+    try:
+        r = requests.post(webhook, json=body, timeout=10)
+        data = r.json()
+        if data.get("code") == 0 or data.get("StatusCode") == 0:
+            return True, "飞书推送成功"
+        return False, f"飞书返回错误: {data.get('msg', data)}"
+    except Exception as e:
+        return False, f"飞书发送失败: {e}"
+
+
+def push_to_all_channels(title, text, force=False, channel=None):
+    results = []
+    if channel:
+        if channel == "dingtalk":
+            return [dingtalk_send(title, text, force=force)]
+        elif channel == "wecom":
+            return [wecom_send(title, text, force=force)]
+        elif channel == "feishu":
+            return [feishu_send(title, text, force=force)]
+        return [(False, f"未知渠道: {channel}")]
+
+    # 钉钉
+    with lock:
+        dt_en = bool(config["dingtalk"].get("enabled", True) and config["dingtalk"].get("webhook", "").strip())
+        wc_en = bool(config.get("wecom", {}).get("enabled", False) and config.get("wecom", {}).get("webhook", "").strip())
+        fs_en = bool(config.get("feishu", {}).get("enabled", False) and config.get("feishu", {}).get("webhook", "").strip())
+
+    if dt_en or force:
+        results.append(dingtalk_send(title, text, force=force))
+    if wc_en:
+        results.append(wecom_send(title, text, force=force))
+    if fs_en:
+        results.append(feishu_send(title, text, force=force))
+
+    if not results:
+        results.append((False, "未启用任何推送渠道或未配置 Webhook"))
+    return results
+
+
+def notify(pname, title, text, tag="print", event=None, with_media=False, printer_id=None, force=False):
     def run():
         with lock:
             enabled = config["notify"]["enabled"]
@@ -357,10 +534,11 @@ def notify(pname, title, text, tag="print", event=None, with_media=False, printe
             log.info("%s 不在推送时间段内，已跳过", full_title)
             return
         body = text
-        if with_media and cam_enabled and not force and printer_index is not None:
-            body = attach_media(printer_index, tag, body)
-        ok, msg = dingtalk_send(full_title, body, force=force)
-        add_event("notify" if ok else "error", f"【{full_title}】{msg}")
+        if with_media and cam_enabled and not force and printer_id is not None:
+            body = attach_media(printer_id, tag, body)
+        res_list = push_to_all_channels(full_title, body, force=force)
+        for ok, msg in res_list:
+            add_event("notify" if ok else "error", f"【{full_title}】{msg}")
 
     threading.Thread(target=run, daemon=True).start()
 
@@ -408,22 +586,22 @@ def run_ffmpeg(src, out_args, out_path, timeout):
         return False
 
 
-def grab_snapshot(index, tag):
-    p = pcfg(index)
+def grab_snapshot(pid, tag):
+    p = pcfg_by_id(pid)
     if not (p["host"] and p["access_code"]):
         return None
     MEDIA_DIR.mkdir(parents=True, exist_ok=True)
-    jpg = MEDIA_DIR / f"p{index + 1}_{tag}_{int(time.time())}.jpg"
+    jpg = MEDIA_DIR / f"{pid}_{tag}_{int(time.time())}.jpg"
     return jpg if run_ffmpeg(rtsp_url(p), ["-frames:v", "1", "-q:v", "3"], jpg, timeout=12) else None
 
 
-def grab_clip(index, tag, seconds):
-    p = pcfg(index)
+def grab_clip(pid, tag, seconds):
+    p = pcfg_by_id(pid)
     if not (p["host"] and p["access_code"]):
         return None
     MEDIA_DIR.mkdir(parents=True, exist_ok=True)
     sec = max(2, min(15, int(seconds or 5)))
-    mp4 = MEDIA_DIR / f"p{index + 1}_{tag}_{int(time.time())}.mp4"
+    mp4 = MEDIA_DIR / f"{pid}_{tag}_{int(time.time())}.mp4"
     ok = run_ffmpeg(
         rtsp_url(p),
         ["-t", str(sec), "-vf", "scale=1280:-2", "-c:v", "libx264", "-preset", "veryfast",
@@ -445,26 +623,27 @@ def prune_media(keep=100):
         pass
 
 
-def capture_media(index, tag):
+def capture_media(pid, tag):
     with lock:
         cam = dict(config["camera"])
     if not cam["enabled"]:
         return None, None
-    jpg = grab_snapshot(index, tag) if cam["snapshot"] else None
-    mp4 = grab_clip(index, tag, cam["clip_seconds"]) if cam["clip"] else None
+    jpg = grab_snapshot(pid, tag) if cam["snapshot"] else None
+    mp4 = grab_clip(pid, tag, cam["clip_seconds"]) if cam["clip"] else None
     if jpg or mp4:
         prune_media()
     return jpg, mp4
 
 
-def attach_media(index, tag, text):
-    jpg, mp4 = capture_media(index, tag)
+def attach_media(pid, tag, text):
+    jpg, mp4 = capture_media(pid, tag)
+    p = pcfg_by_id(pid)
     if not jpg and not mp4:
-        add_event("info", f"{pcfg(index)['name']} 摄像头抓取失败，仅推送文字")
+        add_event("info", f"{p['name']} 摄像头抓取失败，仅推送文字")
         return text
-    base = lan_base_url(pcfg(index)["host"])
+    base = lan_base_url(p["host"])
     if not base:
-        add_event("info", f"{pcfg(index)['name']} 无法确定 NAS 局域网地址，画面未附带")
+        add_event("info", f"{p['name']} 无法确定 NAS 局域网地址，画面未附带")
         return text
     parts = [text]
     if jpg:
@@ -475,8 +654,8 @@ def attach_media(index, tag, text):
 
 
 class PrinterMonitor:
-    def __init__(self, index):
-        self.index = index
+    def __init__(self, pid):
+        self.pid = pid
         self.client = None
         self.last_bucket = 0
         self.stopping = False
@@ -484,13 +663,15 @@ class PrinterMonitor:
     def start(self):
         self.last_bucket = 0
         self.stopping = False
-        p = pcfg(self.index)
+        p = pcfg_by_id(self.pid)
+        s = get_printer_status(self.pid)
         if not (p["host"] and p["sn"] and p["access_code"]):
             with lock:
-                statuses[self.index]["configured"] = False
-                statuses[self.index]["connected"] = False
+                s["configured"] = False
+                s["connected"] = False
             return
-        statuses[self.index]["configured"] = True
+        with lock:
+            s["configured"] = True
         c = mqtt.Client()
         c.tls_set(cert_reqs=ssl.CERT_NONE)
         c.tls_insecure_set(True)
@@ -517,7 +698,8 @@ class PrinterMonitor:
                 pass
             self.client = None
         with lock:
-            statuses[self.index]["connected"] = False
+            if self.pid in statuses:
+                statuses[self.pid]["connected"] = False
 
     def restart(self):
         self.stop()
@@ -525,9 +707,10 @@ class PrinterMonitor:
         self.start()
 
     def _on_connect(self, client, userdata, flags, rc):
-        p = pcfg(self.index)
+        p = pcfg_by_id(self.pid)
         with lock:
-            statuses[self.index]["connected"] = True
+            if self.pid in statuses:
+                statuses[self.pid]["connected"] = True
         add_event("info", f"{p['name']} 已连接")
         client.subscribe(f"device/{p['sn']}/report")
         client.publish(
@@ -538,18 +721,19 @@ class PrinterMonitor:
     def _on_disconnect(self, client, userdata, rc):
         if self.stopping or client is not self.client:
             with lock:
-                statuses[self.index]["connected"] = False
+                if self.pid in statuses:
+                    statuses[self.pid]["connected"] = False
             return
-        p = pcfg(self.index)
+        p = pcfg_by_id(self.pid)
         with lock:
-            s = statuses[self.index]
+            s = get_printer_status(self.pid)
             printing = s["gcode_state"] in ("RUNNING", "PAUSED", "PREPARE", "SLICING")
             do_notify = config["notify"]["enabled"] and config["notify"]["on_offline"]
             s["connected"] = False
         add_event("error", f"{p['name']} 连接断开，将自动重连")
         if printing and do_notify:
             notify(p["name"], "打印机离线", "MQTT 连接断开，打印可能中断，服务将自动重连。",
-                   tag="offline", event="offline", printer_index=self.index)
+                   tag="offline", event="offline", printer_id=self.pid)
 
     def _on_message(self, client, userdata, msg):
         try:
@@ -559,7 +743,7 @@ class PrinterMonitor:
         try:
             self._handle(data)
         except Exception as e:
-            log.warning("%s 处理消息出错: %s", pcfg(self.index)["name"], e)
+            log.warning("%s 处理消息出错: %s", pcfg_by_id(self.pid)["name"], e)
 
     def _handle(self, data):
         p = data.get("print") or {}
@@ -567,7 +751,7 @@ class PrinterMonitor:
             return
         gs = p.get("gcode_state") or ""
         n = config["notify"]
-        s = statuses[self.index]
+        s = get_printer_status(self.pid)
         with lock:
             prev = s["gcode_state"]
             s["last_msg_ts"] = time.time()
@@ -595,7 +779,7 @@ class PrinterMonitor:
         if not gs or gs == prev:
             return
 
-        name = pcfg(self.index)["name"]
+        name = pcfg_by_id(self.pid)["name"]
 
         def task_name():
             with lock:
@@ -608,11 +792,11 @@ class PrinterMonitor:
             self.last_bucket = pct // step if step > 0 else 0
             if n.get("on_start"):
                 notify(name, "开始打印", f"**任务**：{task_name()}\n\n**进度**：{pct}%",
-                       tag="start", event="start", with_media=True, printer_index=self.index)
+                       tag="start", event="start", with_media=True, printer_id=self.pid)
 
         if gs == "RUNNING" and prev == "PAUSED" and n.get("on_resume"):
             notify(name, "打印已恢复", f"**任务**：{task_name()}",
-                   tag="resume", event="resume", with_media=True, printer_index=self.index)
+                       tag="resume", event="resume", with_media=True, printer_id=self.pid)
 
         if gs in ("FINISH", "SUCCEEDED"):
             with lock:
@@ -623,16 +807,16 @@ class PrinterMonitor:
                 dur = f"\n\n**耗时**：{fmt_minutes(mins) or '0分钟'}"
             if n.get("on_finish"):
                 notify(name, "打印完成", f"**任务**：{task_name()}{dur}",
-                       tag="finish", event="finish", with_media=True, printer_index=self.index)
+                       tag="finish", event="finish", with_media=True, printer_id=self.pid)
         elif gs == "FAILED":
             with lock:
                 err = s["error_code"]
             if n.get("on_failed"):
                 notify(name, "打印失败", f"**任务**：{task_name()}\n\n**错误码**：{err or '未知'}",
-                       tag="fail", event="failed", with_media=True, printer_index=self.index)
+                       tag="fail", event="failed", with_media=True, printer_id=self.pid)
         elif gs == "PAUSED" and prev != "PAUSED" and n.get("on_pause"):
             notify(name, "打印已暂停", f"**任务**：{task_name()}",
-                   tag="pause", event="pause", with_media=True, printer_index=self.index)
+                   tag="pause", event="pause", with_media=True, printer_id=self.pid)
 
         if gs == "RUNNING":
             step = int(n.get("progress_step") or 0)
@@ -642,24 +826,187 @@ class PrinterMonitor:
                     self.last_bucket = b
                     notify(name, f"打印进度 {b * step}%",
                            f"**任务**：{task_name()}\n\n**剩余时间**：{rt or '未知'}",
-                           tag="print", event="progress", with_media=True, printer_index=self.index)
-
-
-monitors = [PrinterMonitor(i) for i in range(MAX_PRINTERS)]
+                           tag="print", event="progress", with_media=True, printer_id=self.pid)
 
 
 def start_enabled():
     with lock:
-        enabled = [i for i, p in enumerate(config["printers"]) if p["enabled"]]
-    for i in enabled:
-        monitors[i].start()
+        get_or_create_monitors()
+        enabled_pids = [p["id"] for p in config["printers"] if p["enabled"]]
+    for pid in enabled_pids:
+        monitors[pid].start()
 
+
+# ------------------ 局域网扫描器（SSDP 组播发现 + 网段 8883 端口快速探测） ------------------
+
+def detect_local_subnet():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(1)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+        parts = local_ip.split(".")
+        return f"{parts[0]}.{parts[1]}.{parts[2]}.0/24", local_ip
+    except Exception:
+        return "192.168.1.0/24", "127.0.0.1"
+
+
+def scan_bambu_ssdp(timeout=2.0):
+    discovered = {}
+    msearch_msg = (
+        "M-SEARCH * HTTP/1.1\r\n"
+        "HOST: 239.255.255.250:2021\r\n"
+        'MAN: "ssdp:discover"\r\n'
+        "MX: 2\r\n"
+        "ST: urn:bambulab-com:device:3dprinter:1\r\n\r\n"
+    ).encode("utf-8")
+
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.settimeout(timeout)
+
+        # 尝试发送到组播地址和通用广播地址
+        for target in [("239.255.255.250", 2021), ("255.255.255.255", 2021), ("239.255.255.250", 1990)]:
+            try:
+                sock.sendto(msearch_msg, target)
+            except Exception:
+                pass
+
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            try:
+                data, addr = sock.recvfrom(4096)
+                text = data.decode("utf-8", "ignore")
+                headers = {}
+                for line in text.split("\r\n"):
+                    if ":" in line:
+                        k, v = line.split(":", 1)
+                        headers[k.strip().lower()] = v.strip()
+
+                ip = addr[0]
+                loc = headers.get("location", "")
+                if loc and "://" in loc:
+                    try:
+                        parsed = urllib.parse.urlparse(loc)
+                        if parsed.hostname:
+                            ip = parsed.hostname
+                    except Exception:
+                        pass
+
+                sn = headers.get("usn") or headers.get("devserial.bambu.com") or ""
+                name = headers.get("devname.bambu.com") or headers.get("server") or f"Bambu_{ip}"
+                model = headers.get("devmodel.bambu.com") or "拓竹打印机"
+
+                discovered[ip] = {
+                    "ip": ip,
+                    "name": name,
+                    "sn": sn,
+                    "model": model,
+                    "source": "ssdp",
+                }
+            except socket.timeout:
+                break
+            except Exception:
+                pass
+        sock.close()
+    except Exception as e:
+        log.warning("SSDP 扫描异常: %s", e)
+    return discovered
+
+
+def probe_port(ip, port=8883, timeout=0.35):
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        res = s.connect_ex((ip, port))
+        s.close()
+        return res == 0
+    except Exception:
+        return False
+
+
+def scan_subnet_ports(subnet_str, timeout=0.35):
+    open_ips = []
+    try:
+        net = ipaddress.IPv4Network(subnet_str, strict=False)
+        hosts = [str(h) for h in net.hosts()]
+        if len(hosts) > 256:
+            hosts = hosts[:256]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=64) as ex:
+            future_to_ip = {ex.submit(probe_port, ip, 8883, timeout): ip for ip in hosts}
+            for fut in concurrent.futures.as_completed(future_to_ip):
+                ip = future_to_ip[fut]
+                try:
+                    if fut.result():
+                        open_ips.append(ip)
+                except Exception:
+                    pass
+    except Exception as e:
+        log.warning("网段扫描异常: %s", e)
+    return open_ips
+
+
+def scan_lan_printers(subnet_str=None):
+    auto_subnet, _ = detect_local_subnet()
+    target_subnet = subnet_str.strip() if (subnet_str and subnet_str.strip()) else auto_subnet
+
+    # 1. 组播/广播 SSDP 发现
+    ssdp_res = scan_bambu_ssdp(timeout=1.8)
+
+    # 2. 网段 8883 端口并发探测
+    port_ips = scan_subnet_ports(target_subnet, timeout=0.4)
+
+    # 合并结果
+    merged = dict(ssdp_res)
+    for ip in port_ips:
+        if ip not in merged:
+            merged[ip] = {
+                "ip": ip,
+                "name": f"Bambu_{ip}",
+                "sn": "",
+                "model": "拓竹设备 (8883端口)",
+                "source": "port_8883",
+            }
+
+    # 标注是否已经在当前配置中
+    with lock:
+        configured_hosts = {p["host"].strip() for p in config["printers"] if p.get("host")}
+        configured_sns = {p["sn"].strip() for p in config["printers"] if p.get("sn")}
+
+    results = []
+    for item in merged.values():
+        ip = item["ip"]
+        sn = item.get("sn", "")
+        already_added = (ip in configured_hosts) or (sn and sn in configured_sns)
+        results.append({
+            **item,
+            "already_added": already_added,
+        })
+    results.sort(key=lambda x: (x["already_added"], x["ip"]))
+    return {
+        "ok": True,
+        "subnet": target_subnet,
+        "devices": results,
+        "total": len(results),
+    }
+
+
+# ------------------ FastAPI Lifespan 与路由 ------------------
 
 @asynccontextmanager
 async def lifespan(app):
     load_config()
     start_enabled()
     yield
+    # Shutdown
+    with lock:
+        for m in monitors.values():
+            try:
+                m.stop()
+            except Exception:
+                pass
 
 
 app = FastAPI(lifespan=lifespan)
@@ -678,6 +1025,7 @@ def api_get_config():
     printers = []
     for p in cfg["printers"]:
         printers.append({
+            "id": p["id"],
             "name": p["name"],
             "host": p["host"],
             "sn": p["sn"],
@@ -686,19 +1034,37 @@ def api_get_config():
             "access_code_set": bool(p["access_code"].strip()),
         })
     d = cfg["dingtalk"]
+    wc = cfg.get("wecom", {"enabled": False, "webhook": ""})
+    fs = cfg.get("feishu", {"enabled": False, "webhook": "", "secret": ""})
+    auto_subnet, _ = detect_local_subnet()
     return {
         "printers": printers,
+        "max_printers": MAX_PRINTERS,
+        "printer_count": len(printers),
         "dingtalk": {
             **d,
             "webhook": "",
             "secret": "",
-            "webhook_set": bool(d["webhook"].strip()),
-            "secret_set": bool(d["secret"].strip()),
+            "webhook_set": bool(d.get("webhook", "").strip()),
+            "secret_set": bool(d.get("secret", "").strip()),
+        },
+        "wecom": {
+            **wc,
+            "webhook": "",
+            "webhook_set": bool(wc.get("webhook", "").strip()),
+        },
+        "feishu": {
+            **fs,
+            "webhook": "",
+            "secret": "",
+            "webhook_set": bool(fs.get("webhook", "").strip()),
+            "secret_set": bool(fs.get("secret", "").strip()),
         },
         "notify": cfg["notify"],
         "camera": cfg["camera"],
         "version": __version__,
         "timezone": server_tz_label(),
+        "local_subnet": auto_subnet,
     }
 
 
@@ -707,26 +1073,75 @@ async def api_post_config(req: Request):
     global config
     body = await req.json()
     with lock:
-        before = [dict(p) for p in config["printers"]]
+        before_printers = {p["id"]: dict(p) for p in config["printers"]}
         cur = json.loads(json.dumps(config))
-    for i, item in enumerate((body.get("printers") or [])[:MAX_PRINTERS]):
-        if not isinstance(item, dict):
-            continue
-        p = cur["printers"][i]
-        if "name" in item:
-            p["name"] = str(item["name"]).strip() or f"P2S_{i + 1}"
-        for k in ("host", "sn"):
-            if k in item:
-                p[k] = str(item[k]).strip()
-        if str(item.get("access_code", "")).strip():
-            p["access_code"] = str(item["access_code"]).strip()
+
+    # 更新打印机列表
+    if "printers" in body and isinstance(body["printers"], list):
+        new_list = []
+        used_ids = set()
+        for idx, item in enumerate(body["printers"][:MAX_PRINTERS]):
+            if not isinstance(item, dict):
+                continue
+            pid = str(item.get("id") or "").strip()
+            if not pid or pid in used_ids:
+                pid = generate_printer_id()
+            used_ids.add(pid)
+
+            # 获取原有记录以保留留空的 access_code
+            old_p = before_printers.get(pid, {})
+            name = str(item.get("name") or "").strip() or f"P2S_{idx + 1}"
+            host = str(item.get("host") or "").strip()
+            sn = str(item.get("sn") or "").strip()
+            code_in = str(item.get("access_code", "")).strip()
+            code = code_in if code_in else old_p.get("access_code", "")
+
+            enabled = bool(item.get("enabled", False))
+            if enabled and not (host and sn and code):
+                enabled = False
+
+            new_list.append({
+                "id": pid,
+                "name": name,
+                "host": host,
+                "sn": sn,
+                "access_code": code,
+                "enabled": enabled,
+            })
+        if not new_list:
+            new_list = [{
+                "id": "p_1", "name": "P2S_1", "host": "", "sn": "", "access_code": "", "enabled": False
+            }]
+        cur["printers"] = new_list
+
+    # 更新钉钉
     dt = body.get("dingtalk") or {}
+    if "enabled" in dt:
+        cur["dingtalk"]["enabled"] = bool(dt["enabled"])
     if "keyword" in dt:
         cur["dingtalk"]["keyword"] = str(dt["keyword"]).strip()
     if str(dt.get("webhook", "")).strip():
         cur["dingtalk"]["webhook"] = str(dt["webhook"]).strip()
     if str(dt.get("secret", "")).strip():
         cur["dingtalk"]["secret"] = str(dt["secret"]).strip()
+
+    # 更新企业微信
+    wc = body.get("wecom") or {}
+    if "enabled" in wc:
+        cur["wecom"]["enabled"] = bool(wc["enabled"])
+    if str(wc.get("webhook", "")).strip():
+        cur["wecom"]["webhook"] = str(wc.get("webhook")).strip()
+
+    # 更新飞书
+    fs = body.get("feishu") or {}
+    if "enabled" in fs:
+        cur["feishu"]["enabled"] = bool(fs["enabled"])
+    if str(fs.get("webhook", "")).strip():
+        cur["feishu"]["webhook"] = str(fs.get("webhook")).strip()
+    if str(fs.get("secret", "")).strip():
+        cur["feishu"]["secret"] = str(fs.get("secret")).strip()
+
+    # 更新通知设置
     nt = body.get("notify") or {}
     for k, v in cur["notify"].items():
         if k not in nt or k == "windows":
@@ -743,6 +1158,8 @@ async def api_post_config(req: Request):
         if err:
             return {"ok": False, "msg": err}
         cur["notify"]["windows"] = windows
+
+    # 更新摄像头设置
     cm = body.get("camera") or {}
     for k in ("enabled", "snapshot", "clip"):
         if k in cm:
@@ -752,40 +1169,115 @@ async def api_post_config(req: Request):
             cur["camera"]["clip_seconds"] = max(2, min(15, int(cm["clip_seconds"])))
         except (TypeError, ValueError):
             pass
+
     with lock:
         config = cur
         save_config()
+        get_or_create_monitors()
+
     add_event("info", "配置已保存")
-    for i, p in enumerate(cur["printers"]):
-        old = before[i]
+
+    # 根据配置变化重启/停止监视器
+    with lock:
+        current_p_map = {p["id"]: p for p in cur["printers"]}
+
+    for pid, p in current_p_map.items():
+        old = before_printers.get(pid, {})
         if (p["host"], p["sn"], p["access_code"], p["enabled"]) == (
-            old["host"], old["sn"], old["access_code"], old["enabled"]
+            old.get("host"), old.get("sn"), old.get("access_code"), old.get("enabled")
         ):
             continue
+        m = get_monitor_for_printer(pid)
         if p["enabled"]:
-            monitors[i].restart()
+            m.restart()
         else:
-            monitors[i].stop()
+            m.stop()
+
     return {"ok": True, "msg": "已保存"}
 
 
-@app.post("/api/printer/{index}/toggle")
-async def api_toggle_printer(index: int, req: Request):
-    if not (0 <= index < MAX_PRINTERS):
-        raise HTTPException(status_code=400, detail="无效的设备序号")
+@app.post("/api/printer/add")
+async def api_add_printer(req: Request):
+    body = await req.json()
+    with lock:
+        if len(config["printers"]) >= MAX_PRINTERS:
+            return {"ok": False, "msg": f"已达到最大设备数限制（{MAX_PRINTERS}台）"}
+        pid = generate_printer_id()
+        idx = len(config["printers"]) + 1
+        name = str(body.get("name") or f"P2S_{idx}").strip()
+        host = str(body.get("host") or "").strip()
+        sn = str(body.get("sn") or "").strip()
+        access_code = str(body.get("access_code") or "").strip()
+        enabled = bool(body.get("enabled", False)) and bool(host and sn and access_code)
+
+        new_p = {
+            "id": pid,
+            "name": name,
+            "host": host,
+            "sn": sn,
+            "access_code": access_code,
+            "enabled": enabled,
+        }
+        config["printers"].append(new_p)
+        save_config()
+        get_or_create_monitors()
+
+    if enabled:
+        monitors[pid].start()
+    add_event("info", f"新增设备: {name}")
+    return {"ok": True, "msg": f"设备 {name} 已添加", "printer": {"id": pid, "name": name}}
+
+
+@app.delete("/api/printer/{identifier}")
+@app.post("/api/printer/{identifier}/delete")
+def api_delete_printer(identifier: str):
+    idx, p = find_printer_index_and_data(identifier)
+    if p is None:
+        raise HTTPException(status_code=404, detail="未找到该设备")
+    pid = p["id"]
+    name = p["name"]
+    with lock:
+        if pid in monitors:
+            try:
+                monitors[pid].stop()
+            except Exception:
+                pass
+            del monitors[pid]
+        if pid in statuses:
+            del statuses[pid]
+        config["printers"] = [item for item in config["printers"] if item["id"] != pid]
+        if not config["printers"]:
+            # 保持至少 1 个空行
+            config["printers"] = [{
+                "id": "p_1", "name": "P2S_1", "host": "", "sn": "", "access_code": "", "enabled": False
+            }]
+            get_or_create_monitors()
+        save_config()
+
+    add_event("info", f"设备 {name} 已删除")
+    return {"ok": True, "msg": f"设备 {name} 已删除"}
+
+
+@app.post("/api/printer/{identifier}/toggle")
+async def api_toggle_printer(identifier: str, req: Request):
+    idx, p = find_printer_index_and_data(identifier)
+    if p is None:
+        raise HTTPException(status_code=404, detail="未找到该设备")
     body = await req.json()
     enabled = bool(body.get("enabled"))
+    pid = p["id"]
+    name = p["name"]
     with lock:
-        p = config["printers"][index]
         if enabled and not (p["host"] and p["sn"] and p["access_code"]):
             return {"ok": False, "msg": "先填写该打印机的 IP / 序列号 / 访问码并保存"}
         p["enabled"] = enabled
-        name = p["name"]
         save_config()
+
+    m = get_monitor_for_printer(pid)
     if enabled:
-        monitors[index].restart()
+        m.restart()
     else:
-        monitors[index].stop()
+        m.stop()
     add_event("info", f"{name} 已{'启动' if enabled else '停用'}监控")
     return {"ok": True, "msg": f"{name} 已{'启动' if enabled else '停用'}"}
 
@@ -795,11 +1287,15 @@ def api_status():
     now = time.time()
     out = []
     with lock:
-        for i, p in enumerate(config["printers"]):
-            s = dict(statuses[i])
+        for idx, p in enumerate(config["printers"]):
+            pid = p["id"]
+            s = dict(get_printer_status(pid))
             out.append({
-                "index": i,
+                "index": idx,
+                "id": pid,
                 "name": p["name"],
+                "host": p["host"],
+                "sn": p["sn"],
                 "enabled": p["enabled"],
                 "configured": s["configured"] or bool(p["host"] and p["sn"] and p["access_code"]),
                 "connected": s["connected"],
@@ -819,10 +1315,13 @@ def api_status():
             })
         enabled_count = sum(1 for p in config["printers"] if p["enabled"])
     online_count = sum(1 for x in out if x["online"])
+    running_count = sum(1 for x in out if x["gcode_state"] == "RUNNING")
     return {
         "printers": out,
+        "total_count": len(out),
         "enabled_count": enabled_count,
         "online_count": online_count,
+        "running_count": running_count,
         "version": __version__,
         "timezone": server_tz_label(),
     }
@@ -842,16 +1341,25 @@ def api_media(name: str):
     return FileResponse(f)
 
 
+@app.post("/api/scan")
+async def api_scan(req: Request):
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    subnet = str(body.get("subnet") or "").strip()
+    res = scan_lan_printers(subnet_str=subnet)
+    return res
+
+
 @app.post("/api/test/printer")
 async def api_test_printer(req: Request):
     body = await req.json()
-    try:
-        index = int(body.get("index", -1))
-    except (TypeError, ValueError):
-        index = -1
-    if not (0 <= index < MAX_PRINTERS):
-        raise HTTPException(status_code=400, detail="无效的设备序号")
-    p = pcfg(index)
+    identifier = body.get("id") if body.get("id") is not None else body.get("index")
+    idx, p = find_printer_index_and_data(identifier)
+    if p is None:
+        raise HTTPException(status_code=400, detail="无效的设备标识")
+    pid = p["id"]
     if not (p["host"] and p["sn"] and p["access_code"]):
         return {"ok": False, "msg": f"{p['name']} 配置不完整"}
     res = {}
@@ -907,7 +1415,7 @@ async def api_test_printer(req: Request):
     with lock:
         cam = dict(config["camera"])
     if cam["enabled"]:
-        jpg = grab_snapshot(index, "test")
+        jpg = grab_snapshot(pid, "test")
         if jpg:
             base = lan_base_url(p["host"])
             url = f"{base}/media/{jpg.name}" if base else None
@@ -915,6 +1423,20 @@ async def api_test_printer(req: Request):
         else:
             msg += "；摄像头抓图失败（检查 RTSP / 固件）"
     return {"ok": True, "msg": msg, "url": url}
+
+
+@app.post("/api/test/channel")
+async def api_test_channel(req: Request):
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    channel = body.get("channel", "dingtalk")
+    results = push_to_all_channels("测试消息", "这是 webhook-p2s 发出的测试消息。", force=True, channel=channel)
+    if results:
+        ok, msg = results[0]
+        return {"ok": ok, "msg": msg}
+    return {"ok": False, "msg": "测试失败"}
 
 
 @app.post("/api/test/dingtalk")

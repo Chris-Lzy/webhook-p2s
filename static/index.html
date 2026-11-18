@@ -6,8 +6,9 @@
 <title>拓竹打印机监控</title>
 <style>
   :root{
-    --g:#00ae42;--g-d:#00963a;--bg:#eef2f0;--card:#fff;--tx:#1b231f;--mut:#6d7c74;
-    --bd:#e2e9e5;--bd2:#eef3f0;--red:#d4380d;--amber:#c47f0a;
+    --g:#00ae42;--g-d:#00963a;--g-l:#e8f7ee;--bg:#eef2f0;--card:#fff;--tx:#1b231f;--mut:#6d7c74;
+    --bd:#e2e9e5;--bd2:#eef3f0;--red:#d4380d;--red-l:#fdecea;--amber:#c47f0a;--amber-l:#fdf4e3;
+    --blue:#1677ff;--blue-l:#e6f4ff;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%}
@@ -15,24 +16,33 @@
   header{flex:0 0 auto;background:var(--card);border-bottom:1px solid var(--bd);padding:12px 20px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 1px 2px rgba(20,30,25,.04)}
   header h1{font-size:16px;font-weight:600;display:flex;align-items:center;gap:10px}
   .tag{font-size:11px;color:var(--mut);border:1px solid var(--bd);border-radius:999px;padding:2px 9px;font-weight:400}
+  .tag.active{background:var(--g-l);color:var(--g-d);border-color:rgba(0,174,66,.25);font-weight:600}
+  .head-stats{display:flex;align-items:center;gap:10px}
   .chipstat{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--mut);background:#f5f8f6;border:1px solid var(--bd);border-radius:999px;padding:4px 12px;font-variant-numeric:tabular-nums}
   .chipstat .dot{width:7px;height:7px;border-radius:50%;background:#b9c3bd}
   .chipstat .dot.on{background:var(--g)}
   .chipstat .dot.warn{background:var(--amber)}
   .chipstat .dot.off{background:var(--red)}
-  main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 396px 320px;grid-template-areas:"table cfg log";gap:14px;padding:14px 16px}
+
+  main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 420px 320px;grid-template-areas:"table cfg log";gap:14px;padding:14px 16px}
   .card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px 18px;min-height:0;display:flex;flex-direction:column;box-shadow:0 1px 2px rgba(20,30,25,.03)}
   #printer-card{grid-area:table}
   #config-card{grid-area:cfg;overflow-y:auto}
   #log-card{grid-area:log}
+
   .card-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:4px}
   .card-head h2{font-size:13px;font-weight:600;color:var(--tx)}
   .card-head .meta{font-size:11px;color:var(--mut)}
   .card-sub{font-size:11px;color:var(--mut);line-height:1.6;margin-bottom:10px}
-  .trace{font-size:11.5px;color:var(--mut);margin-top:2px}
+
+  .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+  .search-box{flex:1;min-width:180px;position:relative}
+  .search-box input{width:100%;padding:6px 10px 6px 28px;border:1px solid var(--bd);border-radius:8px;font-size:12px;background:#f8fbf9}
+  .search-box input:focus{outline:none;border-color:var(--g);background:#fff}
+  .search-box::before{content:"🔍";position:absolute;left:8px;top:6px;font-size:11px;opacity:.6}
 
   .table-wrap{flex:1;min-height:0;overflow:auto;margin:0 -6px;padding:0 6px}
-  table{width:100%;min-width:840px;border-collapse:collapse;table-layout:fixed}
+  table{width:100%;min-width:880px;border-collapse:collapse;table-layout:fixed}
   thead th{position:sticky;top:0;z-index:2;background:var(--card);text-align:left;font-size:11px;color:var(--mut);font-weight:500;padding:7px 6px;border-bottom:1px solid var(--bd);white-space:nowrap}
   thead th:last-child{text-align:right}
   tbody td{padding:4px 6px;border-bottom:1px solid var(--bd2);vertical-align:middle}
@@ -41,30 +51,43 @@
   tbody td input::placeholder{color:#a9b6ae}
   tbody td input:hover{background:#eff4f1}
   tbody td input:focus{outline:none;background:#fff;border-color:var(--g);box-shadow:0 0 0 3px rgba(0,174,66,.12)}
-  .c-st{width:118px}.c-prog{width:auto}.c-op{width:104px}
-  .chip{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;background:#f2f5f3;color:var(--mut);font-size:11px;font-weight:600;max-width:100%}
+  .c-st{width:112px}.c-prog{width:auto}.c-op{width:138px}
+
+  .chip{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:999px;background:#f2f5f3;color:var(--mut);font-size:11px;font-weight:600;max-width:100%}
   .chip em{width:6px;height:6px;border-radius:50%;background:#b9c3bd;flex:0 0 auto}
   .chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .chip.on{background:#e8f7ee;color:#0a7f36}.chip.on em{background:var(--g)}
+  .chip.on{background:var(--g-l);color:#0a7f36}.chip.on em{background:var(--g)}
   .chip.run{background:#e1f6e9;color:#077a32}.chip.run em{background:var(--g);box-shadow:0 0 0 3px rgba(0,174,66,.16)}
-  .chip.warn{background:#fdf4e3;color:#8a5a00}.chip.warn em{background:var(--amber)}
-  .chip.pause{background:#fdf4e3;color:#8a5a00}.chip.pause em{background:var(--amber)}
-  .chip.fail{background:#fdecea;color:var(--red)}.chip.fail em{background:var(--red)}
+  .chip.warn{background:var(--amber-l);color:#8a5a00}.chip.warn em{background:var(--amber)}
+  .chip.pause{background:var(--amber-l);color:#8a5a00}.chip.pause em{background:var(--amber)}
+  .chip.fail{background:var(--red-l);color:var(--red)}.chip.fail em{background:var(--red)}
+
   .pbar{height:5px;background:#edf2ef;border-radius:999px;overflow:hidden}
   .pbar>i{display:block;height:100%;width:0;background:var(--g);border-radius:999px;transition:width .4s}
   .pmeta{font-size:11px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:4px;min-height:14px}
-  .ops{display:flex;gap:6px;justify-content:flex-end}
+  .ops{display:flex;gap:5px;justify-content:flex-end}
+
   button{padding:8px 16px;border-radius:9px;border:1px solid var(--bd);background:#fff;font-size:12.5px;cursor:pointer;font-family:inherit;color:var(--tx);transition:background .15s,border-color .15s}
   button:hover{border-color:#bfccc5;background:#fafcfb}
   button:disabled{opacity:.5;cursor:default}
   button.pri{background:var(--g);border-color:var(--g);color:#fff}
   button.pri:hover{background:var(--g-d)}
-  button.mini{padding:4px 11px;font-size:11.5px;border-radius:7px;white-space:nowrap}
+  button.mini{padding:4px 9px;font-size:11.5px;border-radius:7px;white-space:nowrap}
   button.mini.start{background:var(--g);border-color:var(--g);color:#fff}
   button.mini.start:hover{background:var(--g-d)}
   button.mini.stop{background:#fff;border-color:#edc07a;color:#8a5a00}
   button.mini.stop:hover{background:#fffaf2}
   button.mini.test{background:#fff;color:#42524a}
+  button.mini.del{background:#fff;color:var(--red);border-color:#ffccc7}
+  button.mini.del:hover{background:var(--red-l);border-color:var(--red)}
+  button.action-btn{display:inline-flex;align-items:center;gap:5px;padding:6px 12px;font-size:12px;border-radius:8px}
+
+  /* 渠道 Tab 切换 */
+  .tabs{display:flex;gap:4px;background:#f3f7f4;padding:3px;border-radius:9px;margin-bottom:12px}
+  .tab-btn{flex:1;text-align:center;padding:6px 0;font-size:12px;border-radius:7px;border:none;background:transparent;color:var(--mut);cursor:pointer;font-weight:500}
+  .tab-btn.active{background:#fff;color:var(--tx);font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+  .channel-pane{display:none}
+  .channel-pane.active{display:block}
 
   #config-card .sec{padding:15px 0;border-top:1px solid var(--bd2)}
   #config-card .sec:first-child{padding-top:0;border-top:none}
@@ -80,6 +103,7 @@
   .checks .num{white-space:nowrap;gap:4px}
   #config-card .checks .num input[type=text]{width:40px;text-align:center;padding:3px 4px;border-radius:6px;border:1px solid var(--bd);background:#fff;font-size:12px;margin:0 2px}
   .checks .span2{grid-column:span 2}
+
   .win{border:1px solid var(--bd2);background:#f8fbf9;border-radius:10px;padding:10px;margin:0 0 10px}
   .win-top{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
   #config-card .win-en{display:flex;align-items:center;gap:6px;margin:0;font-size:12px;color:var(--tx);cursor:pointer}
@@ -88,12 +112,13 @@
   .win-to{color:var(--mut);font-size:12px}
   .win-top .mini{margin-left:auto}
   .win-days{display:flex;gap:4px;margin-top:8px}
-  .win-days .day{padding:3px 0;width:28px;text-align:center;border-radius:7px;font-size:11px;background:#fff}
+  .win-days .day{padding:3px 0;width:28px;text-align:center;border-radius:7px;font-size:11px;background:#fff;border:1px solid var(--bd)}
   .win-days .day.on{background:var(--g);border-color:var(--g);color:#fff}
   .win-ev{margin-top:8px}
   .win-ev label{padding:5px 8px;font-size:11.5px}
   #win-add{width:100%;margin-top:2px}
   #win-empty{margin-bottom:8px}
+
   .actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px}
   .hint{font-size:11px;color:var(--mut);line-height:1.7;margin-top:10px;padding-top:10px;border-top:1px dashed var(--bd)}
 
@@ -102,17 +127,38 @@
   #log-card li .t{color:var(--mut);flex:0 0 58px;font-variant-numeric:tabular-nums;font-size:11px}
   #log-card li .m{flex:0 0 auto;font-size:9px;line-height:1}
   #log-card li .x{flex:1;min-width:0;word-break:break-word}
-  .empty{color:var(--mut);font-size:12px;padding:10px 0}
+  .empty{color:var(--mut);font-size:12px;padding:10px 0;text-align:center}
 
-  #toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#222c27;color:#fff;padding:9px 20px;border-radius:9px;font-size:12.5px;opacity:0;pointer-events:none;transition:opacity .25s;z-index:9;max-width:80vw;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+  /* 扫描弹窗 Modal */
+  .modal-overlay{position:fixed;inset:0;background:rgba(18,24,20,.45);backdrop-filter:blur(2px);z-index:99;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .2s}
+  .modal-overlay.show{opacity:1;pointer-events:auto}
+  .modal{width:640px;max-width:92vw;max-height:85vh;background:var(--card);border-radius:14px;border:1px solid var(--bd);box-shadow:0 18px 48px rgba(0,0,0,.15);display:flex;flex-direction:column;overflow:hidden}
+  .modal-head{padding:14px 18px;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;align-items:center}
+  .modal-head h3{font-size:14px;font-weight:600}
+  .modal-close{border:none;background:transparent;font-size:18px;cursor:pointer;color:var(--mut);padding:2px 6px;border-radius:6px}
+  .modal-close:hover{background:#f0f4f2}
+  .modal-body{padding:16px 18px;overflow-y:auto;flex:1}
+  .scan-bar{display:flex;gap:10px;align-items:center;margin-bottom:14px}
+  .scan-bar input{flex:1;padding:7px 10px;border:1px solid var(--bd);border-radius:8px;font-size:12px}
+  .scan-devices{display:flex;flex-direction:column;gap:8px}
+  .scan-item{border:1px solid var(--bd);background:#f9fbf9;border-radius:10px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .scan-info{display:flex;flex-direction:column;gap:3px}
+  .scan-title{font-weight:600;font-size:12.5px;display:flex;align-items:center;gap:6px}
+  .scan-model{font-size:11px;padding:1px 6px;border-radius:4px;background:#e2f2e7;color:var(--g-d);font-weight:normal}
+  .scan-sub{font-size:11px;color:var(--mut)}
+  .scan-empty{text-align:center;padding:28px 0;color:var(--mut);font-size:12.5px}
+  .loading-spin{display:inline-block;width:14px;height:14px;border:2px solid #ccc;border-top-color:var(--g);border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:6px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  #toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#222c27;color:#fff;padding:9px 20px;border-radius:9px;font-size:12.5px;opacity:0;pointer-events:none;transition:opacity .25s;z-index:100;max-width:80vw;box-shadow:0 8px 24px rgba(0,0,0,.18)}
   #toast.err{background:var(--red)}
   #toast.ok{background:var(--g)}
-  #cam-pop{position:fixed;right:18px;bottom:18px;width:340px;max-width:80vw;background:var(--card);border:1px solid var(--bd);border-radius:12px;box-shadow:0 14px 40px rgba(0,0,0,.18);padding:10px;z-index:8;display:none}
+  #cam-pop{position:fixed;right:18px;bottom:18px;width:340px;max-width:80vw;background:var(--card);border:1px solid var(--bd);border-radius:12px;box-shadow:0 14px 40px rgba(0,0,0,.18);padding:10px;z-index:80;display:none}
   #cam-pop .cap{display:flex;justify-content:space-between;align-items:center;font-size:11.5px;color:var(--mut);margin-bottom:8px}
   #cam-pop img{width:100%;border-radius:8px;display:block}
   #cam-close{padding:3px 9px;font-size:11px;border-radius:6px}
 
-  @media (max-width:1440px){main{grid-template-columns:minmax(0,1fr) 376px 300px}}
+  @media (max-width:1440px){main{grid-template-columns:minmax(0,1fr) 390px 290px}}
   @media (max-width:1180px){
     body{overflow:auto}
     main{height:auto;grid-template-columns:minmax(0,1fr) 300px;grid-template-areas:"table log" "cfg log"}
@@ -127,99 +173,183 @@
 </head>
 <body>
 <header>
-  <h1>拓竹打印机监控<span class="tag">webhook-p2s</span><span class="tag" id="app-ver">v{{APP_VERSION}}</span></h1>
-  <span class="chipstat"><i class="dot" id="st-dot"></i><span id="st-online">加载中</span></span>
+  <h1>拓竹打印机监控<span class="tag">webhook-p2s</span><span class="tag active" id="app-ver">v{{APP_VERSION}}</span></h1>
+  <div class="head-stats">
+    <span class="chipstat"><i class="dot" id="st-dot"></i><span id="st-online">加载中</span></span>
+  </div>
 </header>
 <main>
 
   <section class="card" id="printer-card">
     <div class="card-head">
-      <h2>打印机列表</h2>
-      <span class="meta">20 个设备席位 · 推送标题 = 设备名称 + 事件</span>
+      <h2>打印机管理</h2>
+      <span class="meta" id="dev-count-label">支持最多 1000 台设备</span>
     </div>
-    <div class="card-sub">填好 IP / 序列号 / 访问码后点「保存全部」，再点该行「启动」。拓竹屏幕：设置 → 局域网模式，开启后可查看访问码。</div>
+    <div class="card-sub">局域网模式（LAN Mode）：填好 IP / 序列号 / 访问码后点「保存全部」，再点该行「启动」。</div>
+
+    <div class="toolbar">
+      <button class="action-btn pri" id="b-scan-open">📡 扫描局域网</button>
+      <button class="action-btn" id="b-add-printer">➕ 添加设备</button>
+      <div class="search-box">
+        <input type="text" id="dev-search" placeholder="搜索设备名称 / IP / 序列号 / 状态...">
+      </div>
+    </div>
+
     <div class="table-wrap">
       <table>
         <colgroup>
-          <col style="width:11%"><col style="width:14%"><col style="width:14%"><col style="width:11%">
-          <col style="width:12%"><col style="width:26%"><col style="width:12%">
+          <col style="width:13%"><col style="width:14%"><col style="width:14%"><col style="width:11%">
+          <col style="width:11%"><col style="width:23%"><col style="width:14%">
         </colgroup>
         <thead>
           <tr><th>设备名称</th><th>IP 地址</th><th>序列号 SN</th><th>访问码</th><th>状态</th><th>任务 / 进度</th><th>操作</th></tr>
         </thead>
         <tbody id="ptbody"></tbody>
       </table>
+      <div class="empty" id="ptbody-empty" hidden>暂无匹配的设备</div>
     </div>
   </section>
 
   <section class="card" id="config-card">
+    <!-- 推送渠道设置 -->
     <div class="sec">
-      <h2>钉钉群机器人</h2>
-      <div class="sub">群设置 → 智能群助手 → 自定义机器人</div>
-      <label>Webhook 地址</label>
-      <input type="text" id="f-webhook" placeholder="https://oapi.dingtalk.com/robot/send?access_token=...">
-      <label>加签密钥 SEC（安全设置为“加签”时填写）</label>
-      <input type="password" id="f-secret" placeholder="SEC...">
-      <label>消息关键词（安全设置为“自定义关键词”时填写）</label>
-      <input type="text" id="f-keyword" placeholder="如：打印">
-    </div>
+      <div class="card-head">
+        <h2>推送渠道配置</h2>
+        <span class="meta">多渠道协同推送</span>
+      </div>
+      <div class="sub">支持同时启用钉钉、企业微信、飞书机器人。未勾选的渠道不会发送。</div>
 
-    <div class="sec">
-      <h2>摄像头画面</h2>
-      <div class="sub">RTSP 直连，需开启局域网模式；X1 全系支持，P1 / A1 需较新固件</div>
-      <div class="checks">
-        <label><input type="checkbox" id="c-enabled"> 推送附带画面</label>
-        <label><input type="checkbox" id="c-snap"> 内嵌快照图</label>
-        <label><input type="checkbox" id="c-clip"> 附带视频链接</label>
-        <label class="num">视频 <input type="text" id="c-sec" value="5"> 秒（2–15）</label>
+      <div class="tabs">
+        <button type="button" class="tab-btn active" data-tab="tab-ding">钉钉群机器人</button>
+        <button type="button" class="tab-btn" data-tab="tab-wecom">企业微信</button>
+        <button type="button" class="tab-btn" data-tab="tab-feishu">飞书机器人</button>
+      </div>
+
+      <!-- 钉钉 -->
+      <div class="channel-pane active" id="tab-ding">
+        <div class="checks" style="margin-bottom:8px">
+          <label class="span2"><input type="checkbox" id="d-en"> 启用钉钉推送</label>
+        </div>
+        <label>Webhook 地址</label>
+        <input type="text" id="d-hook" placeholder="https://oapi.dingtalk.com/robot/send?access_token=...">
+        <label>加签密钥（可选，SEC 开头）</label>
+        <input type="password" id="d-sec" placeholder="留空保持不变">
+        <label>自定义关键词（可选）</label>
+        <input type="text" id="d-kw" placeholder="推送标题前自动追加该关键词">
+        <div style="margin-top:10px;text-align:right">
+          <button type="button" class="mini test" id="b-test-ding">测试钉钉推送</button>
+        </div>
+      </div>
+
+      <!-- 企业微信 -->
+      <div class="channel-pane" id="tab-wecom">
+        <div class="checks" style="margin-bottom:8px">
+          <label class="span2"><input type="checkbox" id="wc-en"> 启用企业微信推送</label>
+        </div>
+        <label>Webhook 地址</label>
+        <input type="text" id="wc-hook" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...">
+        <div style="margin-top:10px;text-align:right">
+          <button type="button" class="mini test" id="b-test-wecom">测试企业微信</button>
+        </div>
+      </div>
+
+      <!-- 飞书 -->
+      <div class="channel-pane" id="tab-feishu">
+        <div class="checks" style="margin-bottom:8px">
+          <label class="span2"><input type="checkbox" id="fs-en"> 启用飞书推送</label>
+        </div>
+        <label>Webhook 地址</label>
+        <input type="text" id="fs-hook" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/...">
+        <label>加签密钥（可选）</label>
+        <input type="password" id="fs-sec" placeholder="留空保持不变">
+        <div style="margin-top:10px;text-align:right">
+          <button type="button" class="mini test" id="b-test-feishu">测试飞书推送</button>
+        </div>
       </div>
     </div>
 
+    <!-- 通知规则 -->
     <div class="sec">
       <h2>通知规则</h2>
-      <div class="sub">总开关关闭时全部不推送。下面的勾选是事件总闸，未勾选的类型不会推送。未添加时间段时，已勾选的事件全天推送。</div>
+      <div class="sub">勾选触发通知的事件类型；关闭总开关则暂停所有正常事件推送。</div>
       <div class="checks">
-        <label><input type="checkbox" id="n-enabled"> 通知总开关</label>
+        <label class="span2"><input type="checkbox" id="n-en"> 通知总开关</label>
         <label><input type="checkbox" id="n-start"> 开始打印</label>
         <label><input type="checkbox" id="n-finish"> 打印完成</label>
         <label><input type="checkbox" id="n-failed"> 打印失败</label>
-        <label><input type="checkbox" id="n-pause"> 暂停</label>
-        <label><input type="checkbox" id="n-resume"> 恢复</label>
+        <label><input type="checkbox" id="n-pause"> 打印暂停</label>
+        <label><input type="checkbox" id="n-resume"> 打印恢复</label>
         <label><input type="checkbox" id="n-offline"> 打印中离线</label>
-        <label><input type="checkbox" id="n-step"> 进度节点推送</label>
-        <label class="num span2">每 <input type="text" id="n-stepv" value="25"> % 推送一次</label>
+        <label class="num span2">
+          <input type="checkbox" id="n-step"> 进度节点：每推进
+          <input type="text" id="n-step-val" value="25" maxlength="3">% 推送
+        </label>
       </div>
     </div>
 
+    <!-- 推送时间段 -->
     <div class="sec">
       <h2>推送时间段</h2>
-      <div class="sub">添加后须同时满足：总开关开启、上方勾选了该事件、当前时间落在某个已启用时段内、且该时段也勾选了该事件。多个时段取并集，同一次事件只推一条；时段全部停用时不会推送。全部删除即恢复全天推送。跨午夜（如 22:00–07:00）有效，星期按当前时刻计算；开始与结束相同表示全天；不选星期则该时段不生效。错过的事件不会补推。<span id="tz-note"></span></div>
-      <div class="trace" id="win-empty">当前未添加时间段，按上方规则全天推送。</div>
+      <div class="sub">为空时全天推送；添加后仅在启用且勾选了对应事件的时段内推送。</div>
       <div id="win-list"></div>
-      <button type="button" id="win-add" class="mini">添加时间段</button>
+      <div class="empty" id="win-empty">未添加时间段（全天推送）</div>
+      <button type="button" class="mini pri" id="win-add">+ 添加时间段</button>
+    </div>
+
+    <!-- 摄像头画面 -->
+    <div class="sec">
+      <h2>摄像头画面</h2>
+      <div class="sub">基于 RTSP 流（322 端口）实时截取图片和短视频链接。</div>
+      <div class="checks">
+        <label class="span2"><input type="checkbox" id="c-en"> 启用摄像头抓流</label>
+        <label><input type="checkbox" id="c-snap"> 附带快照图</label>
+        <label class="num">
+          <input type="checkbox" id="c-clip"> 录制短视频
+          <input type="text" id="c-sec" value="5" maxlength="2">秒
+        </label>
+      </div>
     </div>
 
     <div class="actions">
       <button class="pri" id="b-save">保存全部</button>
-      <button id="b-test-ding">测试钉钉推送</button>
+      <button id="b-test-all">一键测试推送</button>
     </div>
-    <div class="hint">密钥输入框留空表示保持已保存的值。测试钉钉推送不受总开关和时间段限制。图片与视频经 http://NAS的IP:8787 访问，群成员与 NAS 同一局域网时可查看。</div>
+    <div class="hint">密钥类留空表示维持原值。测试不受总开关和时间段限制。图片/视频经 NAS 局域网访问。</div>
   </section>
 
   <section class="card" id="log-card">
-    <div class="card-head"><h2>事件日志</h2><span class="meta">最近 50 条</span></div>
+    <div class="card-head"><h2>事件日志</h2><span class="meta">最近 100 条</span></div>
     <ul id="ev"></ul>
     <div class="empty" id="ev-empty" hidden>暂无事件</div>
   </section>
 
 </main>
+
+<!-- 局域网扫描模态框 -->
+<div class="modal-overlay" id="scan-modal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>📡 扫描局域网拓竹打印机</h3>
+      <button class="modal-close" id="scan-close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="scan-bar">
+        <input type="text" id="scan-subnet" placeholder="自动检测网段（如 192.168.1.0/24）">
+        <button class="pri" id="b-scan-start">开始扫描</button>
+      </div>
+      <div id="scan-status" style="font-size:12px;color:var(--mut);margin-bottom:12px">点击「开始扫描」自动发现局域网内的拓竹设备（SSDP 组播 + 端口探测）。</div>
+      <div class="scan-devices" id="scan-list"></div>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 <div id="cam-pop">
   <div class="cap"><span id="cam-cap">摄像头画面</span><button id="cam-close">关闭</button></div>
   <img id="cam-img" alt="摄像头画面">
 </div>
+
 <script>
-const MAX = 20;
 const MAX_WINDOWS = 8;
 const WEEKDAYS = ['一','二','三','四','五','六','日'];
 const WIN_EVENTS = [
@@ -228,8 +358,11 @@ const WIN_EVENTS = [
   ['progress','进度','进度节点']
 ];
 const $ = s => document.querySelector(s);
-let toastTimer, camTimer;
-const rows = [];
+const $$ = s => document.querySelectorAll(s);
+let toastTimer;
+let printers = []; // 存储所有打印机对象数据
+let printerStatuses = {}; // pid -> status
+let searchTerm = '';
 
 function toast(msg, cls){
   const t = $('#toast');
@@ -238,96 +371,223 @@ function toast(msg, cls){
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.style.opacity = 0, cls === 'err' ? 5000 : 2500);
 }
+
 async function jget(u){ const r = await fetch(u); return r.json(); }
 async function jpost(u, d){
   const r = await fetch(u, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(d||{})});
   return r.json();
 }
 const fmtMin = m => !m || m <= 0 ? '' : m >= 60 ? `${Math.floor(m/60)}小时${m%60}分` : `${m}分钟`;
+
 function el(tag, cls, text){
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text != null) n.textContent = text;
   return n;
 }
-function mkInput(ph){
+
+function mkInput(ph, type='text', val=''){
   const i = el('input');
-  i.type = 'text'; i.placeholder = ph; i.autocomplete = 'off'; i.spellcheck = false;
+  i.type = type; i.placeholder = ph; i.value = val;
+  i.autocomplete = 'off'; i.spellcheck = false;
   return i;
 }
 
-function buildRows(){
+// ----------------- 渲染打印机列表 -----------------
+
+function renderPrintersTable(){
   const tb = $('#ptbody');
-  for (let i = 0; i < MAX; i++){
+  tb.replaceChildren();
+
+  const term = searchTerm.toLowerCase().trim();
+  const filtered = printers.filter(p => {
+    if (!term) return true;
+    const s = printerStatuses[p.id] || {};
+    const task = s.subtask_name || s.gcode_file || '';
+    const stext = s.gcode_state || '';
+    return (p.name || '').toLowerCase().includes(term) ||
+           (p.host || '').toLowerCase().includes(term) ||
+           (p.sn || '').toLowerCase().includes(term) ||
+           task.toLowerCase().includes(term) ||
+           stext.toLowerCase().includes(term);
+  });
+
+  $('#ptbody-empty').hidden = filtered.length > 0;
+  $('#dev-count-label').textContent = `共 ${printers.length} 台设备（上限 1000 台）`;
+
+  filtered.forEach((p, idx) => {
     const tr = el('tr');
+    tr.dataset.pid = p.id;
     const tdName = el('td'), tdIp = el('td'), tdSn = el('td'), tdCode = el('td');
     const tdSt = el('td', 'c-st'), tdProg = el('td', 'c-prog'), tdOp = el('td', 'c-op');
 
-    const nameIn = mkInput(`P2S_${i+1}`);
-    const hostIn = mkInput(i === 0 ? '192.168.1.100' : '');
-    const snIn = mkInput(i === 0 ? '01P00A...' : '');
-    const codeIn = mkInput('未设置');
-    codeIn.type = 'password';
+    const nameIn = mkInput(`P2S_${idx+1}`, 'text', p.name || '');
+    nameIn.onchange = () => { p.name = nameIn.value.trim(); };
+
+    const hostIn = mkInput('192.168.1.100', 'text', p.host || '');
+    hostIn.onchange = () => { p.host = hostIn.value.trim(); };
+
+    const snIn = mkInput('01P00A...', 'text', p.sn || '');
+    snIn.onchange = () => { p.sn = snIn.value.trim(); };
+
+    const codeIn = mkInput(p.access_code_set ? '••••••' : '访问码', 'password', p.access_code || '');
+    codeIn.onchange = () => { p.access_code = codeIn.value.trim(); };
+
     tdName.append(nameIn); tdIp.append(hostIn); tdSn.append(snIn); tdCode.append(codeIn);
 
+    // 状态胶囊
+    const s = printerStatuses[p.id] || {};
     const chip = el('span', 'chip');
     const chipDot = el('em');
-    const stext = el('span', '', '未配置');
+    const stext = el('span', '', getStatusText(s));
     chip.append(chipDot, stext);
+    updateChipStyle(chip, s);
     tdSt.append(chip);
 
+    // 进度条与元数据
     const bar = el('div', 'pbar');
     const fill = el('i');
+    if (s.percent) fill.style.width = Math.min(100, Math.max(0, s.percent)) + '%';
     bar.append(fill);
-    const meta = el('div', 'pmeta', '—');
+
+    const meta = el('div', 'pmeta', getMetaText(s));
     tdProg.append(bar, meta);
 
+    // 操作按钮
     const ops = el('div', 'ops');
-    const btnToggle = el('button', 'mini start', '启动');
+    const btnToggle = el('button', 'mini ' + (p.enabled ? 'stop' : 'start'), p.enabled ? '停用' : '启动');
+    btnToggle.onclick = () => togglePrinter(p);
+
     const btnTest = el('button', 'mini test', '测试');
-    ops.append(btnToggle, btnTest);
+    btnTest.onclick = () => testPrinter(p);
+
+    const btnDel = el('button', 'mini del', '删除');
+    btnDel.onclick = () => deletePrinter(p);
+
+    ops.append(btnToggle, btnTest, btnDel);
     tdOp.append(ops);
 
     tr.append(tdName, tdIp, tdSn, tdCode, tdSt, tdProg, tdOp);
     tb.append(tr);
+  });
+}
 
-    const row = {i, nameIn, hostIn, snIn, codeIn, chip, stext, fill, meta, btnToggle, btnTest, enabled:false};
-    btnToggle.onclick = () => togglePrinter(row);
-    btnTest.onclick = () => testPrinter(row);
-    rows.push(row);
+function getStatusText(s){
+  if (!s || !s.configured) return '未配置';
+  if (!s.connected) return '离线';
+  const stateMap = {
+    'IDLE': '空闲', 'PREPARE': '准备中', 'SLICING': '切片中',
+    'RUNNING': '打印中', 'PAUSED': '已暂停', 'FINISH': '已完成',
+    'SUCCEEDED': '已完成', 'FAILED': '失败'
+  };
+  return stateMap[s.gcode_state] || s.gcode_state || '已连接';
+}
+
+function updateChipStyle(chip, s){
+  chip.className = 'chip';
+  if (!s || !s.connected) return;
+  if (s.gcode_state === 'RUNNING') chip.classList.add('run');
+  else if (s.gcode_state === 'PAUSED') chip.classList.add('pause');
+  else if (s.gcode_state === 'FAILED') chip.classList.add('fail');
+  else chip.classList.add('on');
+}
+
+function getMetaText(s){
+  if (!s || !s.connected) return '—';
+  const parts = [];
+  if (s.percent != null) parts.push(`${s.percent}%`);
+  if (s.task) parts.push(s.task);
+  if (s.remaining_time) parts.push(`余${fmtMin(s.remaining_time)}`);
+  if (s.nozzle_temper != null) parts.push(`喷嘴${s.nozzle_temper}°C`);
+  return parts.length ? parts.join(' · ') : '就绪';
+}
+
+// ----------------- 打印机增删启停 -----------------
+
+function addPrinterRow(defaultData={}){
+  if (printers.length >= 1000){
+    toast('已达 1000 台最大上限', 'err');
+    return;
+  }
+  const pid = defaultData.id || `p_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
+  const idx = printers.length + 1;
+  const p = {
+    id: pid,
+    name: defaultData.name || `P2S_${idx}`,
+    host: defaultData.host || '',
+    sn: defaultData.sn || '',
+    access_code: defaultData.access_code || '',
+    enabled: false
+  };
+  printers.push(p);
+  renderPrintersTable();
+  toast(`已添加 ${p.name}，填写完后请点击「保存全部」`, 'ok');
+}
+
+async function deletePrinter(p){
+  if (!confirm(`确定删除打印机「${p.name}」吗？`)) return;
+  const res = await jpost(`/api/printer/${p.id}/delete`);
+  if (res.ok){
+    printers = printers.filter(item => item.id !== p.id);
+    delete printerStatuses[p.id];
+    renderPrintersTable();
+    toast(res.msg, 'ok');
+  } else {
+    toast(res.msg || '删除失败', 'err');
   }
 }
 
-function renderToggle(row){
-  row.btnToggle.textContent = row.enabled ? '停用' : '启动';
-  row.btnToggle.className = 'mini ' + (row.enabled ? 'stop' : 'start');
+async function togglePrinter(p){
+  const next = !p.enabled;
+  const res = await jpost(`/api/printer/${p.id}/toggle`, {enabled: next});
+  if (res.ok){
+    p.enabled = next;
+    renderPrintersTable();
+    toast(res.msg, 'ok');
+  } else {
+    toast(res.msg || '操作失败', 'err');
+  }
 }
+
+async function testPrinter(p){
+  toast(`正在连接测试 ${p.name}...`);
+  const res = await jpost('/api/test/printer', {id: p.id});
+  if (res.ok){
+    toast(res.msg, 'ok');
+    if (res.url) showCam(p.name, res.url);
+  } else {
+    toast(res.msg, 'err');
+  }
+}
+
+function showCam(name, url){
+  $('#cam-cap').textContent = name + ' 画面';
+  $('#cam-img').src = url;
+  $('#cam-pop').style.display = 'block';
+}
+$('#cam-close').onclick = () => { $('#cam-pop').style.display = 'none'; };
+
+// ----------------- 时间段配置 -----------------
 
 function syncWindows(){
   const n = $('#win-list').children.length;
   $('#win-empty').hidden = n > 0;
   const add = $('#win-add');
   add.disabled = n >= MAX_WINDOWS;
-  add.textContent = n >= MAX_WINDOWS ? `最多 ${MAX_WINDOWS} 个时间段` : '添加时间段';
+  add.textContent = n >= MAX_WINDOWS ? `最多 ${MAX_WINDOWS} 个时间段` : '+ 添加时间段';
 }
 
 function timeInput(cls, value, ph){
   const input = el('input', cls);
-  input.type = 'text';
-  input.placeholder = ph;
-  input.value = value || '';
-  input.maxLength = 5;
-  input.autocomplete = 'off';
-  input.spellcheck = false;
-  input.inputMode = 'numeric';
-  input.title = '24 小时制，例如 ' + ph;
+  input.type = 'text'; input.placeholder = ph; input.value = value || '';
+  input.maxLength = 5; input.autocomplete = 'off'; input.inputMode = 'numeric';
   return input;
 }
-function validClock(value){
-  const m = /^(\d{1,2}):(\d{2})$/.exec((value || '').trim());
+function validClock(v){
+  const m = /^(\d{1,2}):(\d{2})$/.exec((v || '').trim());
   if (!m) return false;
-  const hour = Number(m[1]), minute = Number(m[2]);
-  return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59;
+  const h = Number(m[1]), min = Number(m[2]);
+  return h >= 0 && h <= 23 && min >= 0 && min <= 59;
 }
 
 function windowEl(w){
@@ -350,8 +610,6 @@ function windowEl(w){
   WEEKDAYS.forEach((name, i) => {
     const b = el('button', 'day' + (selected.has(i) ? ' on' : ''), name);
     b.type = 'button';
-    b.dataset.d = String(i);
-    b.title = '周' + name;
     b.onclick = () => b.classList.toggle('on');
     days.append(b);
   });
@@ -361,9 +619,7 @@ function windowEl(w){
   WIN_EVENTS.forEach(([k, label, tip]) => {
     const lab = el('label');
     const c = el('input');
-    c.type = 'checkbox';
-    c.dataset.k = k;
-    c.checked = !!ev[k];
+    c.type = 'checkbox'; c.dataset.k = k; c.checked = !!ev[k];
     lab.title = tip;
     lab.append(c, document.createTextNode(label));
     evs.append(lab);
@@ -379,258 +635,306 @@ function renderWindows(list){
   syncWindows();
 }
 
-function defaultWindow(){
-  const checked = {
-    start: $('#n-start').checked, finish: $('#n-finish').checked, failed: $('#n-failed').checked,
-    pause: $('#n-pause').checked, resume: $('#n-resume').checked, offline: $('#n-offline').checked,
-    progress: $('#n-step').checked
-  };
-  return {enabled:true, start:'08:00', end:'22:00', weekdays:[0,1,2,3,4,5,6], events:checked};
-}
-
 function collectWindows(){
   const windows = [];
   for (const box of $('#win-list').querySelectorAll('.win')){
     const start = box.querySelector('.win-start').value.trim();
     const end = box.querySelector('.win-end').value.trim();
-    if (!validClock(start) || !validClock(end)) return {error: '时间请按 24 小时制填写，例如 22:00'};
+    if (!validClock(start) || !validClock(end)) return {error: '时间格式须为 24 小时制 HH:MM，如 22:00'};
     const events = {};
     box.querySelectorAll('.win-ev input').forEach(i => { events[i.dataset.k] = i.checked; });
+    const weekdays = [];
+    box.querySelectorAll('.win-days .day').forEach((b, i) => { if (b.classList.contains('on')) weekdays.push(i); });
     windows.push({
       enabled: box.querySelector('.win-en input').checked,
-      start, end,
-      weekdays: [...box.querySelectorAll('.win-days .day.on')].map(b => Number(b.dataset.d)),
-      events
+      start, end, weekdays, events
     });
   }
   return {windows};
 }
 
-function printerBody(){
-  const collected = collectWindows();
-  if (collected.error) return collected;
-  return {
-    printers: rows.map(r => ({
-      name: r.nameIn.value.trim() || `P2S_${r.i+1}`,
-      host: r.hostIn.value.trim(),
-      sn: r.snIn.value.trim(),
-      access_code: r.codeIn.value.trim()
-    })),
-    dingtalk: {webhook: $('#f-webhook').value, secret: $('#f-secret').value, keyword: $('#f-keyword').value},
-    notify: {
-      enabled: $('#n-enabled').checked, on_start: $('#n-start').checked,
-      on_finish: $('#n-finish').checked, on_failed: $('#n-failed').checked,
-      on_pause: $('#n-pause').checked, on_resume: $('#n-resume').checked,
-      on_offline: $('#n-offline').checked,
-      progress_step: $('#n-step').checked ? (parseInt($('#n-stepv').value) || 25) : 0,
-      windows: collected.windows
-    },
-    camera: {
-      enabled: $('#c-enabled').checked, snapshot: $('#c-snap').checked,
-      clip: $('#c-clip').checked, clip_seconds: parseInt($('#c-sec').value) || 5
-    }
-  };
-}
-
-async function saveAll(silent){
-  const body = printerBody();
-  if (body.error){ toast(body.error, 'err'); return false; }
-  const btn = $('#b-save');
-  btn.disabled = true;
-  try{
-    const r = await jpost('/api/config', body);
-    if (r.ok){
-      rows.forEach(x => { x.codeIn.value = ''; });
-      if (!silent) toast(r.msg || '已保存', 'ok');
-    } else {
-      toast(r.msg || r.detail || '保存失败', 'err');
-    }
-    return !!r.ok;
-  }catch(e){
-    toast('保存失败：' + e, 'err');
-    return false;
-  }finally{
-    btn.disabled = false;
-  }
-}
-
-async function togglePrinter(row){
-  const enabling = !row.enabled;
-  if (enabling){
-    const ok = await saveAll(true);
-    if (!ok) return;
-    await loadConfig();
-  }
-  row.btnToggle.disabled = true;
-  try{
-    const r = await jpost(`/api/printer/${row.i}/toggle`, {enabled: enabling});
-    toast(r.msg || r.detail || '完成', r.ok ? 'ok' : 'err');
-    if (r.ok){
-      row.enabled = enabling;
-      renderToggle(row);
-    }
-  }catch(e){ toast('操作失败：' + e, 'err'); }
-  row.btnToggle.disabled = false;
-}
-
-function showPreview(url, caption){
-  clearTimeout(camTimer);
-  $('#cam-cap').textContent = caption || '摄像头画面';
-  $('#cam-img').src = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
-  $('#cam-pop').style.display = 'block';
-  camTimer = setTimeout(() => { $('#cam-pop').style.display = 'none'; }, 15000);
-}
-
-async function testPrinter(row){
-  const ok = await saveAll(true);
-  if (!ok) return;
-  const btn = row.btnTest;
-  btn.disabled = true; btn.textContent = '测试中';
-  try{
-    const r = await jpost('/api/test/printer', {index: row.i});
-    toast(r.msg || r.detail || '测试完成', r.ok ? 'ok' : 'err');
-    if (r.url) showPreview(r.url, row.nameIn.value.trim() || `P2S_${row.i+1}`);
-  }catch(e){ toast('测试失败：' + e, 'err'); }
-  btn.disabled = false; btn.textContent = '测试';
-}
-
-async function loadConfig(){
-  try{
-    const c = await jget('/api/config');
-    (c.printers || []).slice(0, MAX).forEach((p, i) => {
-      const row = rows[i];
-      if (!row) return;
-      row.nameIn.value = p.name || '';
-      row.hostIn.value = p.host || '';
-      row.snIn.value = p.sn || '';
-      row.codeIn.value = '';
-      row.codeIn.placeholder = p.access_code_set ? '已配置' : '未设置';
-      row.enabled = !!p.enabled;
-      renderToggle(row);
-    });
-    $('#f-webhook').placeholder = c.dingtalk.webhook_set ? '已配置，留空保持不变' : 'https://oapi.dingtalk.com/robot/send?access_token=...';
-    $('#f-secret').placeholder = c.dingtalk.secret_set ? '已配置，留空保持不变' : 'SEC...';
-    $('#f-keyword').value = c.dingtalk.keyword || '';
-    $('#c-enabled').checked = c.camera.enabled;
-    $('#c-snap').checked = c.camera.snapshot;
-    $('#c-clip').checked = c.camera.clip;
-    $('#c-sec').value = c.camera.clip_seconds || 5;
-    $('#n-enabled').checked = c.notify.enabled;
-    $('#n-start').checked = c.notify.on_start;
-    $('#n-finish').checked = c.notify.on_finish;
-    $('#n-failed').checked = c.notify.on_failed;
-    $('#n-pause').checked = c.notify.on_pause;
-    $('#n-resume').checked = c.notify.on_resume;
-    $('#n-offline').checked = c.notify.on_offline;
-    $('#n-step').checked = c.notify.progress_step > 0;
-    $('#n-stepv').value = c.notify.progress_step > 0 ? c.notify.progress_step : 25;
-    renderWindows(c.notify.windows || []);
-    if (c.version) $('#app-ver').textContent = 'v' + c.version;
-    $('#tz-note').textContent = c.timezone ? ` 当前服务器时区：${c.timezone}。` : '';
-  }catch(e){}
-}
-
-async function refreshStatus(){
-  try{
-    const s = await jget('/api/status');
-    const en = s.enabled_count || 0, on = s.online_count || 0;
-    $('#st-online').textContent = `在线 ${on} · 启用 ${en}`;
-    const dot = $('#st-dot');
-    if (!en) dot.className = 'dot';
-    else if (on === 0) dot.className = 'dot off';
-    else if (on < en) dot.className = 'dot warn';
-    else dot.className = 'dot on';
-
-    (s.printers || []).forEach(p => {
-      const row = rows[p.index];
-      if (!row) return;
-      let label, cls;
-      if (!p.configured){ label = '未配置'; cls = ''; }
-      else if (!p.enabled){ label = '未启用'; cls = ''; }
-      else if (!p.connected){ label = '连接中…'; cls = 'warn'; }
-      else if (!p.online){ label = '等待数据'; cls = 'warn'; }
-      else {
-        label = p.state_text || '在线';
-        cls = p.gcode_state === 'RUNNING' ? 'run' : p.gcode_state === 'FAILED' ? 'fail'
-            : (p.gcode_state === 'PAUSED' || p.gcode_state === 'PREPARE') ? 'pause' : 'on';
-      }
-      row.chip.className = 'chip' + (cls ? ' ' + cls : '');
-      row.stext.textContent = label;
-
-      const pct = p.percent || 0;
-      row.fill.style.width = Math.min(100, pct) + '%';
-      row.fill.style.background = p.gcode_state === 'FAILED' ? 'var(--red)'
-                                : p.gcode_state === 'PAUSED' ? 'var(--amber)' : 'var(--g)';
-
-      if (p.enabled && p.online){
-        const bits = [];
-        if (pct) bits.push(pct + '%');
-        const rt = fmtMin(p.remaining_time);
-        if (rt) bits.push('剩' + rt);
-        if (p.task) bits.push(p.task);
-        row.meta.textContent = bits.join(' · ') || '在线';
-        const tip = [];
-        if (p.task) tip.push(p.task);
-        if (p.layer_num != null && p.total_layer_num != null) tip.push(`层 ${p.layer_num}/${p.total_layer_num}`);
-        if (p.nozzle_temper != null) tip.push(`喷嘴 ${p.nozzle_temper}°C`);
-        if (p.bed_temper != null) tip.push(`热床 ${p.bed_temper}°C`);
-        if (p.error_code) tip.push(`错误码 ${p.error_code}`);
-        row.meta.title = tip.join(' | ');
-      } else if (!p.configured){
-        row.meta.textContent = '—';
-        row.meta.title = '';
-      } else if (!p.enabled){
-        row.meta.textContent = '未启动监控';
-        row.meta.title = '';
-      } else {
-        row.meta.textContent = '等待打印机上报…';
-        row.meta.title = '';
-      }
-      if (p.enabled !== row.enabled){ row.enabled = p.enabled; renderToggle(row); }
-    });
-  }catch(e){}
-}
-
-async function loadEvents(){
-  try{
-    const r = await jget('/api/events');
-    const ul = $('#ev');
-    $('#ev-empty').hidden = r.events.length > 0;
-    ul.replaceChildren();
-    r.events.forEach(e => {
-      const li = el('li');
-      const t = el('span', 't', new Date(e.ts * 1000).toLocaleTimeString('zh-CN', {hour12: false}));
-      const mark = el('span', 'm', '●');
-      mark.style.color = e.type === 'error' ? 'var(--red)' : e.type === 'notify' ? 'var(--g)' : e.type === 'skip' ? 'var(--amber)' : 'var(--mut)';
-      li.append(t, mark, el('span', 'x', e.text));
-      ul.append(li);
-    });
-  }catch(e){}
-}
+// ----------------- 保存配置 -----------------
 
 $('#b-save').onclick = async () => {
-  if (await saveAll(false)) loadConfig();
+  const winData = collectWindows();
+  if (winData.error) return toast(winData.error, 'err');
+
+  const stepVal = parseInt($('#n-step-val').value, 10);
+  const clipSec = parseInt($('#c-sec').value, 10);
+
+  const payload = {
+    printers: printers.map(p => ({
+      id: p.id,
+      name: p.name,
+      host: p.host,
+      sn: p.sn,
+      access_code: p.access_code,
+      enabled: p.enabled
+    })),
+    dingtalk: {
+      enabled: $('#d-en').checked,
+      webhook: $('#d-hook').value.trim(),
+      secret: $('#d-sec').value.trim(),
+      keyword: $('#d-kw').value.trim(),
+    },
+    wecom: {
+      enabled: $('#wc-en').checked,
+      webhook: $('#wc-hook').value.trim(),
+    },
+    feishu: {
+      enabled: $('#fs-en').checked,
+      webhook: $('#fs-hook').value.trim(),
+      secret: $('#fs-sec').value.trim(),
+    },
+    notify: {
+      enabled: $('#n-en').checked,
+      on_start: $('#n-start').checked,
+      on_finish: $('#n-finish').checked,
+      on_failed: $('#n-failed').checked,
+      on_pause: $('#n-pause').checked,
+      on_resume: $('#n-resume').checked,
+      on_offline: $('#n-offline').checked,
+      progress_step: isNaN(stepVal) ? 25 : stepVal,
+      windows: winData.windows
+    },
+    camera: {
+      enabled: $('#c-en').checked,
+      snapshot: $('#c-snap').checked,
+      clip: $('#c-clip').checked,
+      clip_seconds: isNaN(clipSec) ? 5 : clipSec
+    }
+  };
+
+  const res = await jpost('/api/config', payload);
+  if (res.ok){
+    toast('配置已成功保存', 'ok');
+    loadConfig();
+  } else {
+    toast(res.msg || '保存失败', 'err');
+  }
 };
+
+// ----------------- 局域网扫描模态框 -----------------
+
+$('#b-scan-open').onclick = () => {
+  $('#scan-modal').classList.add('show');
+  startScan();
+};
+$('#scan-close').onclick = () => { $('#scan-modal').classList.remove('show'); };
+
+async function startScan(){
+  const sub = $('#scan-subnet').value.trim();
+  const list = $('#scan-list');
+  const statusEl = $('#scan-status');
+  statusEl.innerHTML = '<span class="loading-spin"></span>正在发送 SSDP 广播并并发扫描局域网 8883 端口...';
+  list.replaceChildren();
+
+  const res = await jpost('/api/scan', {subnet: sub});
+  if (res.ok){
+    statusEl.textContent = `扫描完成，网段 ${res.subnet} 发现 ${res.total} 台设备`;
+    if (!res.devices || !res.devices.length){
+      list.innerHTML = '<div class="scan-empty">未发现局域网拓竹打印机。请确认打印机已开机并开启「局域网模式 (LAN Mode)」。</div>';
+      return;
+    }
+    res.devices.forEach(dev => {
+      const item = el('div', 'scan-item');
+      const info = el('div', 'scan-info');
+      const title = el('div', 'scan-title');
+      title.append(document.createTextNode(dev.name || 'Bambu 打印机'));
+      const badge = el('span', 'scan-model', dev.model || '拓竹');
+      title.append(badge);
+
+      const sub = el('div', 'scan-sub', `IP: ${dev.ip} · SN: ${dev.sn || '未知'} · 发现方式: ${dev.source}`);
+      info.append(title, sub);
+      item.append(info);
+
+      if (dev.already_added){
+        const addedTag = el('span', 'tag', '已在列表中');
+        item.append(addedTag);
+      } else {
+        const btnAdd = el('button', 'mini start', '➕ 添加到列表');
+        btnAdd.onclick = () => {
+          addPrinterRow({
+            name: dev.name || `P2S_${dev.ip.split('.').pop()}`,
+            host: dev.ip,
+            sn: dev.sn || ''
+          });
+          dev.already_added = true;
+          btnAdd.replaceWith(el('span', 'tag', '已添加'));
+        };
+        item.append(btnAdd);
+      }
+      list.append(item);
+    });
+  } else {
+    statusEl.textContent = '扫描失败: ' + (res.msg || '未知错误');
+  }
+}
+$('#b-scan-start').onclick = startScan;
+
+// ----------------- 测试按钮 -----------------
+
 $('#b-test-ding').onclick = async () => {
-  const btn = $('#b-test-ding');
-  btn.disabled = true; btn.textContent = '发送中...';
-  try{
-    const r = await jpost('/api/test/dingtalk', {});
-    toast(r.msg, r.ok ? 'ok' : 'err');
-  }catch(e){ toast('测试失败：' + e, 'err'); }
-  btn.disabled = false; btn.textContent = '测试钉钉推送';
+  toast('正在测试钉钉推送...');
+  const res = await jpost('/api/test/channel', {channel: 'dingtalk'});
+  toast(res.msg, res.ok ? 'ok' : 'err');
 };
-$('#cam-close').onclick = () => { $('#cam-pop').style.display = 'none'; clearTimeout(camTimer); };
+$('#b-test-wecom').onclick = async () => {
+  toast('正在测试企业微信推送...');
+  const res = await jpost('/api/test/channel', {channel: 'wecom'});
+  toast(res.msg, res.ok ? 'ok' : 'err');
+};
+$('#b-test-feishu').onclick = async () => {
+  toast('正在测试飞书推送...');
+  const res = await jpost('/api/test/channel', {channel: 'feishu'});
+  toast(res.msg, res.ok ? 'ok' : 'err');
+};
+$('#b-test-all').onclick = async () => {
+  toast('正在测试所有已启用渠道...');
+  const res = await jpost('/api/test/dingtalk');
+  toast(res.msg, res.ok ? 'ok' : 'err');
+};
+
+$('#b-add-printer').onclick = () => addPrinterRow();
 $('#win-add').onclick = () => {
-  if ($('#win-list').children.length >= MAX_WINDOWS) return;
-  $('#win-list').append(windowEl(defaultWindow()));
+  $('#win-list').append(windowEl({
+    enabled: true, start: '08:00', end: '22:00',
+    weekdays: [0,1,2,3,4,5,6],
+    events: {start:true, finish:true, failed:true, pause:false, resume:false, offline:true, progress:true}
+  }));
   syncWindows();
 };
 
-buildRows();
-loadConfig(); loadEvents(); refreshStatus();
-setInterval(refreshStatus, 3000);
-setInterval(loadEvents, 5000);
+// 搜索框过滤
+$('#dev-search').oninput = e => {
+  searchTerm = e.target.value;
+  renderPrintersTable();
+};
+
+// Tab 切换
+$$('.tab-btn').forEach(btn => {
+  btn.onclick = () => {
+    $$('.tab-btn').forEach(b => b.classList.remove('active'));
+    $$('.channel-pane').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    $(`#${btn.dataset.tab}`).classList.add('active');
+  };
+});
+
+// ----------------- 加载与定时同步 -----------------
+
+async function loadConfig(){
+  const cfg = await jget('/api/config');
+  printers = cfg.printers || [];
+  if (cfg.local_subnet && !$('#scan-subnet').value) {
+    $('#scan-subnet').value = cfg.local_subnet;
+  }
+  renderPrintersTable();
+
+  // 钉钉
+  const d = cfg.dingtalk || {};
+  $('#d-en').checked = d.enabled !== false;
+  $('#d-hook').value = '';
+  $('#d-hook').placeholder = d.webhook_set ? '已配置（留空保持不变）' : 'https://oapi.dingtalk.com/...';
+  $('#d-sec').value = '';
+  $('#d-sec').placeholder = d.secret_set ? '已设置（留空保持不变）' : '留空保持不变';
+  $('#d-kw').value = d.keyword || '';
+
+  // 企业微信
+  const wc = cfg.wecom || {};
+  $('#wc-en').checked = !!wc.enabled;
+  $('#wc-hook').value = '';
+  $('#wc-hook').placeholder = wc.webhook_set ? '已配置（留空保持不变）' : 'https://qyapi.weixin.qq.com/...';
+
+  // 飞书
+  const fs = cfg.feishu || {};
+  $('#fs-en').checked = !!fs.enabled;
+  $('#fs-hook').value = '';
+  $('#fs-hook').placeholder = fs.webhook_set ? '已配置（留空保持不变）' : 'https://open.feishu.cn/...';
+  $('#fs-sec').value = '';
+  $('#fs-sec').placeholder = fs.secret_set ? '已设置（留空保持不变）' : '留空保持不变';
+
+  // 通知规则
+  const nt = cfg.notify || {};
+  $('#n-en').checked = nt.enabled !== false;
+  $('#n-start').checked = nt.on_start !== false;
+  $('#n-finish').checked = nt.on_finish !== false;
+  $('#n-failed').checked = nt.on_failed !== false;
+  $('#n-pause').checked = !!nt.on_pause;
+  $('#n-resume').checked = !!nt.on_resume;
+  $('#n-offline').checked = nt.on_offline !== false;
+  $('#n-step').checked = (nt.progress_step || 0) > 0;
+  $('#n-step-val').value = nt.progress_step || 25;
+
+  renderWindows(nt.windows || []);
+
+  // 摄像头
+  const cam = cfg.camera || {};
+  $('#c-en').checked = !!cam.enabled;
+  $('#c-snap').checked = cam.snapshot !== false;
+  $('#c-clip').checked = !!cam.clip;
+  $('#c-sec').value = cam.clip_seconds || 5;
+}
+
+async function syncStatus(){
+  try {
+    const data = await jget('/api/status');
+    const dot = $('#st-dot');
+    dot.className = 'dot ' + (data.online_count > 0 ? 'on' : data.enabled_count > 0 ? 'warn' : 'off');
+    $('#st-online').textContent = `总设备 ${data.total_count} 台 · 在线 ${data.online_count} 台 · 打印中 ${data.running_count || 0} 台`;
+
+    (data.printers || []).forEach(p => {
+      printerStatuses[p.id] = p;
+    });
+
+    // 局部更新当前表格中的胶囊与进度
+    const tb = $('#ptbody');
+    tb.querySelectorAll('tr').forEach(tr => {
+      const pid = tr.dataset.pid;
+      const s = printerStatuses[pid];
+      if (!s) return;
+      const chip = tr.querySelector('.chip');
+      if (chip){
+        updateChipStyle(chip, s);
+        chip.querySelector('span').textContent = getStatusText(s);
+      }
+      const fill = tr.querySelector('.pbar > i');
+      if (fill && s.percent != null) fill.style.width = Math.min(100, Math.max(0, s.percent)) + '%';
+      const meta = tr.querySelector('.pmeta');
+      if (meta) meta.textContent = getMetaText(s);
+    });
+  } catch(e){}
+}
+
+async function syncEvents(){
+  try {
+    const data = await jget('/api/events');
+    const ul = $('#ev');
+    ul.replaceChildren();
+    const evs = data.events || [];
+    $('#ev-empty').hidden = evs.length > 0;
+    evs.forEach(e => {
+      const li = el('li');
+      const d = new Date(e.ts * 1000);
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mm = String(d.getMinutes()).padStart(2, '0');
+      const ss = String(d.getSeconds()).padStart(2, '0');
+      const time = el('span', 't', `${hh}:${mm}:${ss}`);
+      const icon = el('span', 'm', e.type === 'error' ? '❌' : e.type === 'notify' ? '🔔' : e.type === 'skip' ? '⏭️' : 'ℹ️');
+      const text = el('span', 'x', e.text);
+      li.append(time, icon, text);
+      ul.append(li);
+    });
+  } catch(e){}
+}
+
+// 初始化
+loadConfig().then(() => {
+  syncStatus();
+  syncEvents();
+  setInterval(syncStatus, 3000);
+  setInterval(syncEvents, 5000);
+});
 </script>
 </body>
 </html>
