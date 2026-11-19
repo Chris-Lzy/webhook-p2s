@@ -203,6 +203,10 @@ class SlotTracker:
                 changes.append({"reason": reason, "prev": prev, "curr": slot})
             if prev is None or _slot_sig(prev) != _slot_sig(slot):
                 dirty.append(slot)
+            elif prev.get("spool_id") and "spool_id" not in slot:
+                # 槽位没变化时不会重新关联耗材。沿用上一次的 spool_id，
+                # 否则任务基线会丢掉耗材关联，补上单价后成本仍是「待补全」。
+                slot["spool_id"] = prev["spool_id"]
             self.prev[key] = slot
         if active_slot is not None:
             self.active_slot = active_slot
@@ -393,11 +397,19 @@ def match_exact_filaments(filaments, slots):
 def _match_slot(filament, pool, used):
     info = str(filament.get("tray_info_idx") or "").strip()
     if info:
-        for item in pool:
-            if item["slot"] in used:
-                continue
-            if item.get("tray_info_idx") == info:
-                return item
+        same = [
+            item for item in pool
+            if item["slot"] not in used and item.get("tray_info_idx") == info
+        ]
+        if len(same) > 1:
+            # 同一 AMS 里几卷同款料（白/红/黑 PETG Basic 都是 GFG00）时，再按颜色区分。
+            # 同色有多卷时仍取第一卷该色，避免退回成另一种颜色的槽。
+            color = color_rgb(filament.get("color"))
+            by_color = [item for item in same if color and color_rgb(item.get("color")) == color]
+            if by_color:
+                return by_color[0]
+        if same:
+            return same[0]
     material = str(filament.get("material") or "").strip().upper()
     color = color_rgb(filament.get("color"))
     if material and color:
