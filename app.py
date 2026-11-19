@@ -32,7 +32,7 @@ from store import Store
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("monitor")
 
-__version__ = "2.1.0"
+__version__ = "2.1.1"
 
 PORT = int(os.environ.get("PORT", "8787"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", str(Path(__file__).parent / "data")))

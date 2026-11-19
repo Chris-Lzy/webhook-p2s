@@ -1334,7 +1334,9 @@ async function showSpoolDetail(id){
   (spool.events || []).slice(0, 12).forEach(event => {
     const label = eventText[event.event_type] || event.event_type;
     const grams = event.grams != null ? ` ${event.grams} g` : '';
-    box.append(el('div', '', `${fmtTs(event.ts)} · ${label} · ${event.note || ''}${grams}`));
+    const note = (event.note || '').trim();
+    const extra = note && note !== label ? ` · ${note}` : '';
+    box.append(el('div', '', `${fmtTs(event.ts)} · ${label}${extra}${grams}`));
   });
 }
 

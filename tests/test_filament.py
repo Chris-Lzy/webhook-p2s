@@ -434,6 +434,83 @@ class StoreRoundTripTests(unittest.TestCase):
                 "bound_slot": "vt_tray",
             })
 
+    def test_unchanged_report_keeps_spool_so_price_recomputes(self):
+        """槽位原样再报一次后开打，补上单价仍应重算，不能一直停在待补全。"""
+        tracker = SlotTracker()
+        slot = normalize_slot(loaded_tray(remain=100), "ams:0:tray:0", "0")
+        first = tracker.feed([slot])
+        self.store.apply_observation("p1", "P2S_1", first["dirty"], first["changes"], 10, True)
+        spool_id = list(tracker.prev.values())[0]["spool_id"]
+        self.assertTrue(spool_id)
+        again = tracker.feed([normalize_slot(loaded_tray(remain=100), "ams:0:tray:0", "0")])
+        self.assertEqual(again["dirty"], [])
+        current = list(tracker.prev.values())[0]
+        self.assertEqual(current.get("spool_id"), spool_id)
+        self.store.open_job(
+            "p1", "P2S_1", "挂钩", "/data/Metadata/plate_1.gcode",
+            [current], current["slot"], 3, 100, 10,
+        )
+        after = dict(current)
+        after["remain_pct"] = 90
+        job = self.store.close_job("p1", "finished", [after], current["slot"], None, None)
+        self.assertEqual(job["usages"][0]["spool_id"], spool_id)
+        self.assertFalse(job["cost_complete"])
+        self.assertIsNone(job["material_cost"])
+        self.store.update_spool(spool_id, {"unit_price_per_kg": 80})
+        job = self.store.get_job(job["id"])
+        self.assertTrue(job["cost_complete"])
+        self.assertEqual(job["material_cost"], 8)
+
+    def test_price_history_note_is_not_the_visible_label(self):
+        spool = self.store.create_manual({
+            "brand": "Bambu",
+            "material": "PETG",
+            "nominal_weight_g": 1000,
+        })
+        self.store.update_spool(spool["id"], {"unit_price_per_kg": 80})
+        detail = self.store.get_spool(spool["id"])
+        price_events = [event for event in detail["events"] if event["event_type"] == "price_set"]
+        self.assertEqual(len(price_events), 1)
+        self.assertNotEqual(price_events[0]["note"], "更新单价")
+
+
+class RegressionSpoolLink(unittest.TestCase):
+    def test_spool_id_survives_identical_report(self):
+        payload = {"ams": {"ams": [{"id": "0", "tray": [{
+            "id": "0", "state": 11, "tray_type": "PETG",
+            "tag_uid": "AAAA000011112222", "tray_uuid": "B" * 32,
+            "remain": 80, "tray_weight": "1000",
+        }]}]}}
+        tracker = SlotTracker()
+        fed = tracker.feed(parse_slots(payload))
+        fed["dirty"][0]["spool_id"] = 7
+        tracker.feed(parse_slots(payload))
+        self.assertEqual(tracker.prev["ams:0:tray:0"].get("spool_id"), 7)
+
+    def test_same_tray_info_idx_matched_by_color(self):
+        # 实机：官方 PETG Basic（GFG00）白、红、黑同时在 AMS 里。
+        slots = [
+            {"slot": "ams:0:tray:0", "occupied": True, "spool_id": 1, "tray_info_idx": "GFG00", "material": "PETG", "color": "FFFFFFFF"},
+            {"slot": "ams:0:tray:1", "occupied": True, "spool_id": 2, "tray_info_idx": "GFG00", "material": "PETG", "color": "C12E1FFF"},
+            {"slot": "ams:0:tray:2", "occupied": True, "spool_id": 3, "tray_info_idx": "GFG00", "material": "PETG", "color": "000000FF"},
+        ]
+        red = match_exact_filaments(
+            [{"tray_info_idx": "GFG00", "material": "PETG", "color": "#C12E1F", "used_g": 12.5}],
+            slots,
+        )
+        black = match_exact_filaments(
+            [{"tray_info_idx": "GFG00", "material": "PETG", "color": "#000000", "used_g": 4}],
+            slots,
+        )
+        white = match_exact_filaments(
+            [{"tray_info_idx": "GFG00", "material": "PETG", "color": "#FFFFFF", "used_g": 1}],
+            slots,
+        )
+        self.assertEqual(red[0]["spool_id"], 2)
+        self.assertEqual(red[0]["grams"], 12.5)
+        self.assertEqual(black[0]["spool_id"], 3)
+        self.assertEqual(white[0]["spool_id"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

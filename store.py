@@ -280,7 +280,8 @@ class Store:
             if "bound_printer_id" in fields or "bound_slot" in fields:
                 self._clear_competing_binds(spool_id)
             if price_changed:
-                self._event(spool_id, "price_set", note="更新单价")
+                # 事件类型本身会显示成「更新单价」，备注再写一遍就会在历史上出现两次。
+                self._event(spool_id, "price_set", note="")
                 self._recompute_spool_jobs(spool_id)
             self.conn.commit()
             return self._spool(spool_id)
