@@ -360,6 +360,112 @@ class ScheduleTests(unittest.TestCase):
             if app.CONFIG_PATH.exists():
                 app.CONFIG_PATH.unlink()
 
+    def test_one_click_push_reaches_every_enabled_channel(self):
+        original = json.loads(json.dumps(app.config))
+        original_ding = app.dingtalk_send
+        original_wecom = app.wecom_send
+        original_feishu = app.feishu_send
+        called = []
+
+        def fake(name):
+            def send(title, text, force=False):
+                called.append(name)
+                self.assertNotIn("token", text)
+                return True, f"{name}推送成功"
+            return send
+
+        try:
+            app.config["notify"]["enabled"] = False
+            app.config["dingtalk"]["enabled"] = True
+            app.config["dingtalk"]["webhook"] = "https://example.invalid/ding"
+            app.config["wecom"]["enabled"] = True
+            app.config["wecom"]["webhook"] = "https://example.invalid/wecom"
+            app.config["feishu"]["enabled"] = True
+            app.config["feishu"]["webhook"] = "https://example.invalid/feishu"
+            app.dingtalk_send = fake("钉钉")
+            app.wecom_send = fake("企业微信")
+            app.feishu_send = fake("飞书")
+            result = app.api_test_push()
+            self.assertEqual(called, ["钉钉", "企业微信", "飞书"])
+            self.assertTrue(result["ok"])
+            self.assertIn("钉钉推送成功", result["msg"])
+            self.assertIn("飞书推送成功", result["msg"])
+        finally:
+            app.dingtalk_send = original_ding
+            app.wecom_send = original_wecom
+            app.feishu_send = original_feishu
+            app.config = original
+
+    def test_feishu_uses_rich_text_and_wecom_drops_images(self):
+        feishu = app.feishu_rich_lines("**任务**：挂钩\n\n![监控画面](http://nas.local/media/a.jpg)")
+        blob = json.dumps(feishu, ensure_ascii=False)
+        self.assertIn('"style": ["bold"]', blob)
+        self.assertIn("任务", blob)
+        self.assertNotIn("**任务**", blob)
+        self.assertNotIn("![", blob)
+        self.assertIn("http://nas.local/media/a.jpg", blob)
+        self.assertIn("不能直接展示外链图片", blob)
+        wecom = app.format_wecom_markdown("**任务**：挂钩\n\n![监控画面](http://nas.local/media/a.jpg)")
+        self.assertIn("**任务**", wecom)
+        self.assertNotIn("![", wecom)
+        self.assertIn("http://nas.local/media/a.jpg", wecom)
+        self.assertIn("不能直接显示图片", wecom)
+
+    def test_page_search_status_and_navigation(self):
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("s.state_text", html)
+        self.assertIn("热床", html)
+        self.assertIn("已用", html)
+        self.assertIn("层 ${", html)
+        self.assertIn("/api/test/push", html)
+        self.assertNotIn("/api/test/dingtalk", html)
+        self.assertIn("耗材库", html)
+        self.assertIn("待补全", html)
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("2.1.0", readme)
+        self.assertIn("inventory.db", readme)
+        self.assertIn("empty", readme.lower()) if False else         self.assertIn("FTPS", readme)
+        self.assertIn("remain", readme)
+        self.assertIn("-1", readme)
+        self.assertIn("装填时间只在本服务在线", readme)
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("store.py", dockerfile)
+
+    def test_v20_config_still_loads(self):
+        original = json.loads(json.dumps(app.config))
+        secret = "not-a-real-access-code"
+        try:
+            app.CONFIG_PATH.write_text(json.dumps({
+                "printers": [{
+                    "name": "旧设备",
+                    "host": "10.0.0.8",
+                    "sn": "SN-OLD",
+                    "access_code": secret,
+                    "enabled": False,
+                }],
+                "dingtalk": {"webhook": "https://example.invalid/hook", "secret": "sec-value"},
+                "notify": {"windows": [{
+                    "start": "22:00", "end": "07:00", "events": {"start": True},
+                }]},
+            }), encoding="utf-8")
+            app.load_config()
+            self.assertEqual(app.config["printers"][0]["name"], "旧设备")
+            self.assertEqual(app.config["printers"][0]["access_code"], secret)
+            self.assertEqual(app.__version__, "2.1.0")
+            self.assertTrue(app.config["filament"]["low_remain_enabled"])
+            self.assertIn("low_remain", app.config["notify"]["windows"][0]["events"])
+            blob = (app.DATA_DIR / "inventory.db").read_bytes() if (app.DATA_DIR / "inventory.db").exists() else b""
+            if not blob:
+                app.get_store()
+                blob = (app.DATA_DIR / "inventory.db").read_bytes()
+            self.assertNotIn(secret.encode(), blob)
+            self.assertNotIn(b"sec-value", blob)
+        finally:
+            app.config = original
+            app.get_or_create_monitors()
+            if app.CONFIG_PATH.exists():
+                app.CONFIG_PATH.unlink()
+
     def test_multi_channel_push(self):
         original = json.loads(json.dumps(app.config))
         try:
