@@ -42,7 +42,7 @@
   .search-box::before{content:"🔍";position:absolute;left:8px;top:6px;font-size:11px;opacity:.6}
 
   .table-wrap{flex:1;min-height:0;overflow:auto;margin:0 -6px;padding:0 6px}
-  table{width:100%;min-width:880px;border-collapse:collapse;table-layout:fixed}
+  table{width:100%;min-width:980px;border-collapse:collapse;table-layout:fixed}
   thead th{position:sticky;top:0;z-index:2;background:var(--card);text-align:left;font-size:11px;color:var(--mut);font-weight:500;padding:7px 6px;border-bottom:1px solid var(--bd);white-space:nowrap}
   thead th:last-child{text-align:right}
   tbody td{padding:4px 6px;border-bottom:1px solid var(--bd2);vertical-align:middle}
@@ -51,7 +51,34 @@
   tbody td input::placeholder{color:#a9b6ae}
   tbody td input:hover{background:#eff4f1}
   tbody td input:focus{outline:none;background:#fff;border-color:var(--g);box-shadow:0 0 0 3px rgba(0,174,66,.12)}
-  .c-st{width:112px}.c-prog{width:auto}.c-op{width:138px}
+  .c-st{width:168px}.c-prog{width:auto}.c-op{width:138px}
+  .stcell{min-width:0}
+  .sdetail{font-size:10.5px;color:var(--mut);line-height:1.4;margin-top:3px;white-space:normal}
+  [hidden]{display:none !important}
+  .topnav{display:flex;gap:4px;background:#f3f7f4;padding:3px;border-radius:9px}
+  .topnav button{border:none;background:transparent;padding:5px 10px;border-radius:7px;font-size:12px;color:var(--mut);font-weight:500}
+  .topnav button.on{background:#fff;color:var(--tx);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+  body.view-alt{overflow:auto}
+  body.view-alt main{display:none !important}
+  .alt-view{display:none;padding:14px 16px 28px}
+  body.view-spools #view-spools,body.view-loads #view-loads,body.view-jobs #view-jobs,body.view-reports #view-reports{display:block}
+  .alt-view .card{max-width:1180px;overflow:visible}
+  .note{font-size:11.5px;line-height:1.6;color:#6a4b12;background:var(--amber-l);border:1px solid #f3e2c2;border-radius:8px;padding:8px 10px;margin:8px 0 12px}
+  .form-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px 10px;margin:8px 0 12px}
+  .form-grid label{margin:0}
+  .form-grid .span2{grid-column:span 2}
+  .form-grid .span4{grid-column:1 / -1}
+  .card input[type=number],.card input[type=date],.card select,.card textarea,.alt-view input[type=text],.alt-view input[type=number],.alt-view input[type=date],.alt-view select,.alt-view textarea{width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:8px;background:#f8fbf9;font:inherit;font-size:12.5px}
+  .data-table{width:100%;border-collapse:collapse;min-width:760px}
+  .data-table th{position:sticky;top:0;background:#fff;text-align:left;font-size:11px;color:var(--mut);font-weight:500;padding:7px 6px;border-bottom:1px solid var(--bd);white-space:nowrap}
+  .data-table td{padding:7px 6px;border-bottom:1px solid var(--bd2);vertical-align:top;font-size:12px}
+  .swatch{display:inline-block;width:12px;height:12px;border-radius:3px;border:1px solid rgba(0,0,0,.15);vertical-align:-2px;margin-right:4px}
+  .subtabs{display:flex;gap:4px;flex-wrap:wrap;margin:0 0 10px}
+  .subtabs button.on{background:var(--g);border-color:var(--g);color:#fff}
+  .thumb{width:84px;height:62px;object-fit:cover;border-radius:6px;background:#f3f6f4;display:block}
+  .price-miss{color:#8a5a00;font-weight:600}
+  .detail-box{margin-top:12px;padding:10px 12px;background:#f8fbf9;border:1px solid var(--bd2);border-radius:10px;line-height:1.6}
+  @media (max-width:860px){.form-grid{grid-template-columns:1fr 1fr}}
 
   .chip{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:999px;background:#f2f5f3;color:var(--mut);font-size:11px;font-weight:600;max-width:100%}
   .chip em{width:6px;height:6px;border-radius:50%;background:#b9c3bd;flex:0 0 auto}
@@ -174,6 +201,13 @@
 <body>
 <header>
   <h1>拓竹打印机监控<span class="tag">webhook-p2s</span><span class="tag active" id="app-ver">v{{APP_VERSION}}</span></h1>
+  <nav class="topnav" id="topnav">
+    <button type="button" data-view="monitor" class="on">监控</button>
+    <button type="button" data-view="spools">耗材库</button>
+    <button type="button" data-view="loads">装填</button>
+    <button type="button" data-view="jobs">任务</button>
+    <button type="button" data-view="reports">报表</button>
+  </nav>
   <div class="head-stats">
     <span class="chipstat"><i class="dot" id="st-dot"></i><span id="st-online">加载中</span></span>
   </div>
@@ -198,8 +232,8 @@
     <div class="table-wrap">
       <table>
         <colgroup>
-          <col style="width:13%"><col style="width:14%"><col style="width:14%"><col style="width:11%">
-          <col style="width:11%"><col style="width:23%"><col style="width:14%">
+          <col style="width:12%"><col style="width:12%"><col style="width:13%"><col style="width:9%">
+          <col style="width:18%"><col style="width:22%"><col style="width:14%">
         </colgroup>
         <thead>
           <tr><th>设备名称</th><th>IP 地址</th><th>序列号 SN</th><th>访问码</th><th>状态</th><th>任务 / 进度</th><th>操作</th></tr>
@@ -296,10 +330,29 @@
       <button type="button" class="mini pri" id="win-add">+ 添加时间段</button>
     </div>
 
+    <div class="sec">
+      <h2>耗材与成本</h2>
+      <div class="sub">单价按每千克计算（默认人民币 CNY/kg）。电费和人工是手动费率乘以打印时长，留空表示不计入。低余量告警遵守通知总开关和时间段；余量为 -1（打印机未知）不会告警，也不会拿来估算克数。</div>
+      <div class="checks">
+        <label class="span2"><input type="checkbox" id="f-low"> 低余量告警</label>
+        <label class="num span2">阈值
+          <input type="text" id="f-low-pct" value="10" maxlength="5">%
+        </label>
+      </div>
+      <label>电费（元 / 小时，留空不计）</label>
+      <input type="text" id="f-power" placeholder="例如 0.8">
+      <label>人工（元 / 小时，留空不计）</label>
+      <input type="text" id="f-labor" placeholder="留空表示不计">
+      <label>归档图片保留天数（0 表示不按天数清理）</label>
+      <input type="text" id="f-age" value="90">
+      <label>归档图片最多张数（0 表示不按张数清理）</label>
+      <input type="text" id="f-count" value="400">
+    </div>
+
     <!-- 摄像头画面 -->
     <div class="sec">
       <h2>摄像头画面</h2>
-      <div class="sub">基于 RTSP 流（322 端口）实时截取图片和短视频链接。</div>
+      <div class="sub">X1 / H2 常见 RTSP 322；P1 / A1 常见 6000 端口。P2S 上 RTSP 可能被固件关闭，抓图失败不影响监控和任务归档。钉钉 Markdown 能直接显示快照。企业微信不能嵌图片，只会附上链接。飞书用富文本（加粗、链接），外链图片同样只能点开，不会按图片渲染。</div>
       <div class="checks">
         <label class="span2"><input type="checkbox" id="c-en"> 启用摄像头抓流</label>
         <label><input type="checkbox" id="c-snap"> 附带快照图</label>
@@ -314,7 +367,7 @@
       <button class="pri" id="b-save">保存全部</button>
       <button id="b-test-all">一键测试推送</button>
     </div>
-    <div class="hint">密钥类留空表示维持原值。测试不受总开关和时间段限制。图片/视频经 NAS 局域网访问。</div>
+    <div class="hint">密钥类留空表示维持原值。测试不受总开关和时间段限制。一键测试会逐个发给当前已启用的渠道。钉钉可内嵌快照；企业微信和飞书只附链接。图片经局域网访问。</div>
   </section>
 
   <section class="card" id="log-card">
@@ -343,6 +396,76 @@
   </div>
 </div>
 
+<div class="alt-view" id="view-spools">
+  <section class="card">
+    <div class="card-head"><h2>耗材库</h2><span class="meta">单价：元 / 千克（CNY/kg）</span></div>
+    <div class="card-sub">官方 RFID 料盘在 AMS 上报新的 tag_uid + tray_uuid 时自动建档，只需补单价。没有芯片的第三方料盘在这里手工录入，并绑定到打印机槽位（含外挂 vt_tray）。</div>
+    <div class="note">唯一身份是 tag_uid + tray_uuid。余量 -1 表示打印机不知道还剩多少，页面显示「未知」，不会当成 0 克。</div>
+    <div class="toolbar">
+      <button type="button" class="action-btn pri" id="spool-toggle">＋ 手工录入</button>
+      <button type="button" class="action-btn" id="spool-refresh">刷新</button>
+      <div class="search-box"><input type="text" id="spool-q" placeholder="搜索品牌 / 材料 / 颜色 / 标签"></div>
+    </div>
+    <form id="spool-form" class="form-grid" hidden>
+      <label>品牌<input type="text" id="sf-brand" placeholder="例如 Polymaker"></label>
+      <label>材料<input type="text" id="sf-material" placeholder="PLA / PETG / ABS"></label>
+      <label>颜色<input type="text" id="sf-color" placeholder="#D6001C 或 D6001C"></label>
+      <label>净重（克）<input type="number" id="sf-weight" min="1" step="1" placeholder="1000"></label>
+      <label>单价（元/kg，可后补）<input type="number" id="sf-price" min="0" step="0.01" placeholder="留空表示未定价"></label>
+      <label>购买日期<input type="date" id="sf-date"></label>
+      <label>绑定打印机<select id="sf-printer"><option value="">不绑定</option></select></label>
+      <label>绑定槽位<select id="sf-slot"></select></label>
+      <label class="span4">备注<textarea id="sf-notes" rows="2" placeholder="批次、存放位置等"></textarea></label>
+      <div class="span4"><button type="submit" class="pri">保存耗材</button></div>
+    </form>
+    <div class="table-wrap"><table class="data-table" id="spool-table"></table></div>
+    <div class="detail-box" id="spool-detail" hidden></div>
+  </section>
+</div>
+
+<div class="alt-view" id="view-loads">
+  <section class="card">
+    <div class="card-head"><h2>装填记录</h2><button type="button" class="mini" id="loads-refresh">刷新</button></div>
+    <div class="note">打印机不提供装填时间。这里只在本服务在线时推断：槽位从空变为有料，或 tag_uid / tray_uuid 发生变化。服务离线期间换料，无法还原真实时间，重新上线后的第一次看见只当作基线，不会补记一条装填。</div>
+    <div class="table-wrap"><table class="data-table" id="loads-table"></table></div>
+  </section>
+</div>
+
+<div class="alt-view" id="view-jobs">
+  <section class="card">
+    <div class="card-head"><h2>打印任务</h2><button type="button" class="mini" id="jobs-refresh">刷新</button></div>
+    <div class="card-sub">优先从打印机 FTPS（用户 bblp，端口 990）读取 3mf / gcode 里的 used_g、used_m 和盘预览。部分固件登录成功但目录是空的（只有 . 和 ..，/data 返回 550），这时改用余量百分比估算。两种都没有就标成未知，不会写成 0。</div>
+    <div class="note">用量来源：文件 = 切片元数据；估算 = 标称重量 × 余量差 / 100；未知 = 余量为 -1 或缺少重量。缺单价的成本显示「待补全」，补上单价后会重算，不会当成 0 元。</div>
+    <div class="table-wrap"><table class="data-table" id="jobs-table"></table></div>
+    <div class="detail-box" id="job-detail" hidden></div>
+  </section>
+</div>
+
+<div class="alt-view" id="view-reports">
+  <section class="card">
+    <div class="card-head"><h2>报表</h2><button type="button" class="mini" id="reports-refresh">刷新</button></div>
+    <div class="card-sub">同一模型多次打印会汇总次数、总克数、总成本，以及已算清任务的平均 / 最低 / 最高成本。缺单价或未知用量的任务不计入总成本。</div>
+    <div class="subtabs" id="report-tabs">
+      <button type="button" class="mini on" data-report="models">按模型</button>
+      <button type="button" class="mini" data-report="spools">按耗材</button>
+      <button type="button" class="mini" data-report="materials">按材料</button>
+      <button type="button" class="mini" data-report="colors">按颜色</button>
+      <button type="button" class="mini" data-report="printers">按打印机</button>
+      <button type="button" class="mini" data-report="days">按日</button>
+      <button type="button" class="mini" data-report="months">按月</button>
+    </div>
+    <div class="table-wrap"><table class="data-table" id="report-table"></table></div>
+    <h2 style="margin:16px 0 8px;font-size:13px">双向追溯</h2>
+    <div class="toolbar">
+      <select id="trace-spool" style="min-width:220px"></select>
+      <button type="button" class="mini" id="trace-spool-go">这个耗材打过什么</button>
+      <input type="text" id="trace-model" placeholder="模型名称" style="max-width:240px">
+      <button type="button" class="mini" id="trace-model-go">这个模型用过哪些料</button>
+    </div>
+    <div class="detail-box" id="trace-box">选择耗材或输入模型名称。</div>
+  </section>
+</div>
+
 <div id="toast"></div>
 <div id="cam-pop">
   <div class="cap"><span id="cam-cap">摄像头画面</span><button id="cam-close">关闭</button></div>
@@ -355,7 +478,7 @@ const WEEKDAYS = ['一','二','三','四','五','六','日'];
 const WIN_EVENTS = [
   ['start','开始','开始打印'],['finish','完成','打印完成'],['failed','失败','打印失败'],
   ['pause','暂停','暂停'],['resume','恢复','恢复'],['offline','离线','打印中离线'],
-  ['progress','进度','进度节点']
+  ['progress','进度','进度节点'],['low_remain','余量','耗材余量偏低']
 ];
 const $ = s => document.querySelector(s);
 const $$ = s => document.querySelectorAll(s);
@@ -398,24 +521,9 @@ function mkInput(ph, type='text', val=''){
 function renderPrintersTable(){
   const tb = $('#ptbody');
   tb.replaceChildren();
-
-  const term = searchTerm.toLowerCase().trim();
-  const filtered = printers.filter(p => {
-    if (!term) return true;
-    const s = printerStatuses[p.id] || {};
-    const task = s.subtask_name || s.gcode_file || '';
-    const stext = s.gcode_state || '';
-    return (p.name || '').toLowerCase().includes(term) ||
-           (p.host || '').toLowerCase().includes(term) ||
-           (p.sn || '').toLowerCase().includes(term) ||
-           task.toLowerCase().includes(term) ||
-           stext.toLowerCase().includes(term);
-  });
-
-  $('#ptbody-empty').hidden = filtered.length > 0;
   $('#dev-count-label').textContent = `共 ${printers.length} 台设备（上限 1000 台）`;
 
-  filtered.forEach((p, idx) => {
+  printers.forEach((p, idx) => {
     const tr = el('tr');
     tr.dataset.pid = p.id;
     const tdName = el('td'), tdIp = el('td'), tdSn = el('td'), tdCode = el('td');
@@ -442,7 +550,11 @@ function renderPrintersTable(){
     const stext = el('span', '', getStatusText(s));
     chip.append(chipDot, stext);
     updateChipStyle(chip, s);
-    tdSt.append(chip);
+    const detail = el('div', 'sdetail', statusDetail(s));
+    const stWrap = el('div', 'stcell');
+    stWrap.title = statusTip(s);
+    stWrap.append(chip, detail);
+    tdSt.append(stWrap);
 
     // 进度条与元数据
     const bar = el('div', 'pbar');
@@ -470,6 +582,54 @@ function renderPrintersTable(){
     tr.append(tdName, tdIp, tdSn, tdCode, tdSt, tdProg, tdOp);
     tb.append(tr);
   });
+  applyFilter();
+}
+
+function statusTip(s){
+  if (!s) return '';
+  const tip = [];
+  const label = s.state_text || getStatusText(s);
+  if (label) tip.push(label);
+  if (s.task) tip.push(s.task);
+  if (s.layer_num != null) tip.push(`层 ${s.layer_num}/${s.total_layer_num != null ? s.total_layer_num : '?'}`);
+  if (s.nozzle_temper != null) tip.push(`喷嘴 ${s.nozzle_temper}°C`);
+  if (s.bed_temper != null) tip.push(`热床 ${s.bed_temper}°C`);
+  if (s.elapsed_mins) tip.push(`已用 ${fmtMin(s.elapsed_mins)}`);
+  if (s.remaining_time) tip.push(`剩余 ${fmtMin(s.remaining_time)}`);
+  if (s.error_code) tip.push(`错误码 ${s.error_code}`);
+  return tip.join(' | ');
+}
+
+function statusDetail(s){
+  if (!s || !s.connected) return '';
+  const bits = [];
+  if (s.layer_num != null) bits.push(`层 ${s.layer_num}/${s.total_layer_num != null ? s.total_layer_num : '?'}`);
+  if (s.bed_temper != null) bits.push(`热床 ${s.bed_temper}°C`);
+  const used = fmtMin(s.elapsed_mins);
+  if (used) bits.push(`已用 ${used}`);
+  return bits.join(' · ');
+}
+
+function rowSearchBlob(tr){
+  const pid = tr.dataset.pid;
+  const p = printers.find(item => item.id === pid) || {};
+  const s = printerStatuses[pid] || {};
+  const typed = [...tr.querySelectorAll('input:not([type=password])')].map(i => i.value).join(' ');
+  return [
+    typed, p.name, p.host, p.sn, s.task, s.subtask_name, s.gcode_state, s.state_text, getStatusText(s),
+    s.online ? '在线' : '离线'
+  ].join('\n').toLowerCase();
+}
+
+function applyFilter(){
+  const term = searchTerm.toLowerCase().trim();
+  let shown = 0;
+  document.querySelectorAll('#ptbody tr').forEach(tr => {
+    const ok = !term || rowSearchBlob(tr).includes(term);
+    tr.hidden = !ok;
+    if (ok) shown += 1;
+  });
+  $('#ptbody-empty').hidden = shown > 0;
 }
 
 function getStatusText(s){
@@ -702,7 +862,8 @@ $('#b-save').onclick = async () => {
       snapshot: $('#c-snap').checked,
       clip: $('#c-clip').checked,
       clip_seconds: isNaN(clipSec) ? 5 : clipSec
-    }
+    },
+    filament: collectFilament()
   };
 
   const res = await jpost('/api/config', payload);
@@ -791,7 +952,7 @@ $('#b-test-feishu').onclick = async () => {
 };
 $('#b-test-all').onclick = async () => {
   toast('正在测试所有已启用渠道...');
-  const res = await jpost('/api/test/dingtalk');
+  const res = await jpost('/api/test/push');
   toast(res.msg, res.ok ? 'ok' : 'err');
 };
 
@@ -800,7 +961,7 @@ $('#win-add').onclick = () => {
   $('#win-list').append(windowEl({
     enabled: true, start: '08:00', end: '22:00',
     weekdays: [0,1,2,3,4,5,6],
-    events: {start:true, finish:true, failed:true, pause:false, resume:false, offline:true, progress:true}
+    events: {start:true, finish:true, failed:true, pause:false, resume:false, offline:true, progress:true, low_remain:true}
   }));
   syncWindows();
 };
@@ -808,7 +969,7 @@ $('#win-add').onclick = () => {
 // 搜索框过滤
 $('#dev-search').oninput = e => {
   searchTerm = e.target.value;
-  renderPrintersTable();
+  applyFilter();
 };
 
 // Tab 切换
@@ -874,6 +1035,30 @@ async function loadConfig(){
   $('#c-snap').checked = cam.snapshot !== false;
   $('#c-clip').checked = !!cam.clip;
   $('#c-sec').value = cam.clip_seconds || 5;
+
+  const fil = cfg.filament || {};
+  $('#f-low').checked = fil.low_remain_enabled !== false;
+  $('#f-low-pct').value = fil.low_remain_pct != null ? fil.low_remain_pct : 10;
+  $('#f-power').value = fil.electricity_per_hour != null ? fil.electricity_per_hour : '';
+  $('#f-labor').value = fil.labor_per_hour != null ? fil.labor_per_hour : '';
+  $('#f-age').value = fil.image_max_age_days != null ? fil.image_max_age_days : 90;
+  $('#f-count').value = fil.image_max_count != null ? fil.image_max_count : 400;
+}
+
+function collectFilament(){
+  const power = $('#f-power').value.trim();
+  const labor = $('#f-labor').value.trim();
+  const pct = parseFloat($('#f-low-pct').value);
+  const age = parseInt($('#f-age').value, 10);
+  const count = parseInt($('#f-count').value, 10);
+  return {
+    low_remain_enabled: $('#f-low').checked,
+    low_remain_pct: isNaN(pct) ? 10 : pct,
+    electricity_per_hour: power === '' ? null : power,
+    labor_per_hour: labor === '' ? null : labor,
+    image_max_age_days: isNaN(age) ? 90 : age,
+    image_max_count: isNaN(count) ? 400 : count
+  };
 }
 
 async function syncStatus(){
@@ -898,11 +1083,16 @@ async function syncStatus(){
         updateChipStyle(chip, s);
         chip.querySelector('span').textContent = getStatusText(s);
       }
+      const wrap = tr.querySelector('.stcell');
+      if (wrap) wrap.title = statusTip(s);
+      const detail = tr.querySelector('.sdetail');
+      if (detail) detail.textContent = statusDetail(s);
       const fill = tr.querySelector('.pbar > i');
       if (fill && s.percent != null) fill.style.width = Math.min(100, Math.max(0, s.percent)) + '%';
       const meta = tr.querySelector('.pmeta');
       if (meta) meta.textContent = getMetaText(s);
     });
+    applyFilter();
   } catch(e){}
 }
 
@@ -927,6 +1117,397 @@ async function syncEvents(){
     });
   } catch(e){}
 }
+
+// ----------------- 耗材 / 任务 / 报表 -----------------
+
+const FILE_STATUS = {
+  exact: '已从打印机文件读取',
+  empty_chroot: 'FTPS 目录为空，已改用估算',
+  list_denied: 'FTPS 拒绝列目录',
+  download_failed: '文件下载失败',
+  no_metadata: '文件里没有用量',
+  preview_only: '只有预览图',
+  connect_failed: 'FTPS 连接失败',
+  skipped_no_auth: '未配置访问码',
+  error: '读取失败'
+};
+const SOURCE_TEXT = {exact:'文件', estimated:'估算', unknown:'未知', mixed:'混合'};
+const LOAD_REASON = {empty_to_occupied:'空槽变为有料', identity_change:'标签或 UUID 变化'};
+let reportCache = null;
+let reportView = 'models';
+let spoolCache = [];
+
+function showView(name){
+  document.body.classList.toggle('view-alt', name !== 'monitor');
+  document.body.classList.remove('view-spools','view-loads','view-jobs','view-reports');
+  if (name !== 'monitor') document.body.classList.add('view-' + name);
+  $$('#topnav button').forEach(btn => btn.classList.toggle('on', btn.dataset.view === name));
+  if (name === 'spools') loadSpools();
+  if (name === 'loads') loadLoads();
+  if (name === 'jobs') loadJobs();
+  if (name === 'reports') loadReports();
+}
+$('#topnav').onclick = (event) => {
+  const btn = event.target.closest('button');
+  if (!btn) return;
+  showView(btn.dataset.view);
+};
+
+function fmtTs(ts){
+  if (!ts) return '—';
+  const d = new Date(ts * 1000);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function money(value, complete){
+  if (!complete) return '待补全';
+  if (value == null) return '待补全';
+  return Number(value).toFixed(2);
+}
+function gramsText(value){
+  if (value == null) return '未知';
+  return `${Number(value).toFixed(1)} g`;
+}
+function remainText(value){
+  if (value == null || Number(value) < 0) return '未知';
+  return `${Number(value)}%`;
+}
+function safeColor(value){
+  const match = String(value || '').replace('#','').match(/^[0-9a-fA-F]{6}/);
+  return match ? '#' + match[0] : '#d5ddd8';
+}
+function fillTable(table, headers, rows){
+  table.replaceChildren();
+  const thead = document.createElement('thead');
+  const hr = document.createElement('tr');
+  headers.forEach(text => hr.append(el('th', '', text)));
+  thead.append(hr);
+  const tb = document.createElement('tbody');
+  if (!rows.length){
+    const tr = document.createElement('tr');
+    const td = el('td', '', '暂无数据');
+    td.colSpan = headers.length;
+    tr.append(td);
+    tb.append(tr);
+  } else {
+    rows.forEach(cells => {
+      const tr = document.createElement('tr');
+      cells.forEach(cell => tr.append(cell instanceof Node ? cell : el('td', '', cell == null ? '—' : String(cell))));
+      tb.append(tr);
+    });
+  }
+  table.append(thead, tb);
+}
+function tdNode(node){ const td = document.createElement('td'); td.append(node); return td; }
+
+function slotOptions(){
+  const sel = $('#sf-slot');
+  sel.replaceChildren();
+  sel.append(new Option('不绑定', ''));
+  sel.append(new Option('外挂料盘 vt_tray', 'vt_tray'));
+  for (let unit = 0; unit < 4; unit += 1){
+    for (let tray = 0; tray < 4; tray += 1){
+      const key = `ams:${unit}:tray:${tray}`;
+      sel.append(new Option(`AMS ${unit} 槽 ${tray}`, key));
+    }
+  }
+}
+function fillPrinterSelect(){
+  const sel = $('#sf-printer');
+  const current = sel.value;
+  sel.replaceChildren();
+  sel.append(new Option('不绑定', ''));
+  printers.forEach(p => sel.append(new Option(p.name || p.id, p.id)));
+  sel.value = current;
+}
+
+$('#spool-toggle').onclick = () => {
+  fillPrinterSelect();
+  slotOptions();
+  $('#spool-form').hidden = !$('#spool-form').hidden;
+};
+$('#spool-refresh').onclick = () => loadSpools();
+$('#spool-form').onsubmit = async (event) => {
+  event.preventDefault();
+  const payload = {
+    brand: $('#sf-brand').value.trim(),
+    material: $('#sf-material').value.trim(),
+    color: $('#sf-color').value.trim(),
+    nominal_weight_g: $('#sf-weight').value,
+    unit_price_per_kg: $('#sf-price').value.trim() === '' ? null : $('#sf-price').value,
+    purchase_date: $('#sf-date').value,
+    notes: $('#sf-notes').value.trim(),
+    bound_printer_id: $('#sf-printer').value,
+    bound_slot: $('#sf-slot').value
+  };
+  const res = await jpost('/api/spools', payload);
+  if (!res.ok) return toast(res.msg || '保存失败', 'err');
+  toast('耗材已录入', 'ok');
+  event.target.reset();
+  $('#spool-form').hidden = true;
+  loadSpools();
+};
+$('#spool-q').oninput = () => renderSpools();
+
+async function loadSpools(){
+  const data = await jget('/api/spools');
+  spoolCache = data.spools || [];
+  renderSpools();
+  const sel = $('#trace-spool');
+  if (sel){
+    const current = sel.value;
+    sel.replaceChildren();
+    sel.append(new Option('选择耗材', ''));
+    spoolCache.forEach(spool => {
+      const label = [spool.material || '未填材料', spool.brand, spool.tag_uid].filter(Boolean).join(' · ');
+      sel.append(new Option(label, spool.id));
+    });
+    sel.value = current;
+  }
+}
+function renderSpools(){
+  const term = $('#spool-q').value.trim().toLowerCase();
+  const rows = spoolCache.filter(spool => {
+    if (!term) return true;
+    return [spool.brand, spool.material, spool.color, spool.tag_uid, spool.tray_uuid, spool.notes, spool.tray_id_name]
+      .join(' ').toLowerCase().includes(term);
+  }).map(spool => {
+    const color = el('span');
+    const sw = el('i', 'swatch');
+    sw.style.background = safeColor(spool.color);
+    color.append(sw, document.createTextNode(spool.color || '—'));
+    const price = el('span');
+    if (spool.unit_price_per_kg == null) price.className = 'price-miss';
+    price.textContent = spool.unit_price_per_kg == null ? '未定价' : `${spool.unit_price_per_kg} ${spool.currency || 'CNY'}`;
+    const ops = el('div', 'ops');
+    const edit = el('button', 'mini', '改单价');
+    edit.type = 'button';
+    edit.onclick = () => editSpoolPrice(spool);
+    const more = el('button', 'mini', '追溯');
+    more.type = 'button';
+    more.onclick = () => showSpoolDetail(spool.id);
+    ops.append(edit, more);
+    return [
+      spool.source === 'rfid' ? '官方 RFID' : '手工',
+      [spool.material, spool.brand].filter(Boolean).join(' · ') || '—',
+      tdNode(color),
+      spool.nominal_weight_g != null ? `${spool.nominal_weight_g} g` : '—',
+      remainText(spool.remain_pct),
+      tdNode(price),
+      spool.tag_uid ? `${spool.tag_uid}` : '无芯片',
+      spool.last_slot || spool.bound_slot || '—',
+      tdNode(ops)
+    ];
+  });
+  fillTable($('#spool-table'), ['来源','材料','颜色','净重','剩余','单价','标签','槽位','操作'], rows);
+}
+async function editSpoolPrice(spool){
+  const raw = prompt(`「${spool.material || spool.brand || '耗材'}」单价（元/kg），留空表示清除`, spool.unit_price_per_kg == null ? '' : String(spool.unit_price_per_kg));
+  if (raw == null) return;
+  const res = await jpost(`/api/spools/${spool.id}`, {unit_price_per_kg: raw.trim() === '' ? null : raw.trim()});
+  if (!res.ok) return toast(res.msg || '保存失败', 'err');
+  toast('单价已更新，相关任务成本已重算', 'ok');
+  loadSpools();
+}
+async function showSpoolDetail(id){
+  const spool = await jget('/api/spools/' + id);
+  const box = $('#spool-detail');
+  box.hidden = false;
+  box.replaceChildren();
+  const title = el('div', '', `${spool.material || '耗材'} · ${spool.brand || '未填品牌'}`);
+  title.style.fontWeight = '600';
+  box.append(title);
+  const lines = [
+    `标签 ${spool.tag_uid || '无'} / UUID ${spool.tray_uuid || '无'}`,
+    `净重 ${spool.nominal_weight_g || '—'} g，剩余 ${remainText(spool.remain_pct)}`,
+    `喷嘴 ${spool.nozzle_temp_min || '—'}–${spool.nozzle_temp_max || '—'} °C，烘干 ${spool.drying_temp || '—'} °C / ${spool.drying_time || '—'} h`,
+    spool.notes ? `备注 ${spool.notes}` : ''
+  ].filter(Boolean);
+  lines.forEach(text => box.append(el('div', '', text)));
+  box.append(el('div', '', '用过的模型：'));
+  (spool.models || []).forEach(model => {
+    box.append(el('div', '', `${model.task_name} · ${model.prints} 次 · ${gramsText(model.grams)}`));
+  });
+  if (!(spool.models || []).length) box.append(el('div', '', '还没有关联的打印任务'));
+  box.append(el('div', '', '生命周期：'));
+  const eventText = {created:'建档', loaded:'装填', used:'使用', remain:'余量变化', price_set:'更新单价', low_remain:'低余量'};
+  (spool.events || []).slice(0, 12).forEach(event => {
+    const label = eventText[event.event_type] || event.event_type;
+    const grams = event.grams != null ? ` ${event.grams} g` : '';
+    box.append(el('div', '', `${fmtTs(event.ts)} · ${label} · ${event.note || ''}${grams}`));
+  });
+}
+
+async function loadLoads(){
+  const data = await jget('/api/loads');
+  const rows = (data.loads || []).map(item => [
+    fmtTs(item.ts),
+    item.printer_name || item.printer_id,
+    item.slot,
+    LOAD_REASON[item.reason] || item.reason,
+    item.material || '—',
+    item.color || '—',
+    item.tag_uid || '—',
+    item.tray_uuid || '—'
+  ]);
+  fillTable($('#loads-table'), ['时间','打印机','槽位','原因','材料','颜色','tag_uid','tray_uuid'], rows);
+}
+$('#loads-refresh').onclick = () => loadLoads();
+
+async function loadJobs(){
+  const data = await jget('/api/jobs');
+  const rows = (data.jobs || []).map(job => {
+    const usage = (job.usages || []).map(row => {
+      const name = row.material || row.tag_uid || row.slot || '料';
+      return `${name} ${gramsText(row.grams)}（${SOURCE_TEXT[row.source] || row.source}）`;
+    }).join('；') || '无用量';
+    const cost = el('span', job.cost_complete ? '' : 'price-miss', costLabel(job));
+    const pics = el('div');
+    if (job.preview_path){
+      const img = el('img', 'thumb');
+      img.src = '/archive/' + encodeURIComponent(job.preview_path);
+      img.alt = '预览';
+      pics.append(img);
+    }
+    if (job.camera_path){
+      const img = el('img', 'thumb');
+      img.src = '/archive/' + encodeURIComponent(job.camera_path);
+      img.alt = '摄像头';
+      img.style.marginTop = '4px';
+      pics.append(img);
+    }
+    if (!job.preview_path && !job.camera_path) pics.textContent = '无图';
+    const more = el('button', 'mini', '明细');
+    more.type = 'button';
+    more.onclick = () => showJobDetail(job);
+    const ops = el('div');
+    ops.append(pics, more);
+    return [
+      fmtTs(job.end_ts || job.start_ts),
+      job.printer_name || job.printer_id,
+      job.task_name || '未命名任务',
+      jobStateText(job.state),
+      job.layer_num != null ? `${job.layer_num}/${job.total_layer_num || '?'}` : '—',
+      job.duration_sec != null ? fmtMin(Math.round(job.duration_sec / 60)) || '不到 1 分钟' : '进行中',
+      usage,
+      tdNode(cost),
+      tdNode(ops)
+    ];
+  });
+  fillTable($('#jobs-table'), ['时间','打印机','模型','状态','层','用时','用量','成本','画面'], rows);
+}
+function jobStateText(state){
+  return {running:'打印中', finished:'已完成', failed:'失败', cancelled:'已停止'}[state] || state || '—';
+}
+function costLabel(job){
+  if (!job.cost_complete){
+    const partial = job.partial_cost ? `（已计价 ${Number(job.partial_cost).toFixed(2)}）` : '';
+    return '待补全' + partial;
+  }
+  let total = Number(job.material_cost || 0);
+  if (job.electricity_cost != null) total += Number(job.electricity_cost);
+  if (job.labor_cost != null) total += Number(job.labor_cost);
+  return total.toFixed(2) + ' 元';
+}
+function showJobDetail(job){
+  const box = $('#job-detail');
+  box.hidden = false;
+  box.replaceChildren();
+  const title = el('div', '', job.task_name || '未命名任务');
+  title.style.fontWeight = '600';
+  box.append(title);
+  const bits = [
+    `${job.printer_name || ''} · ${jobStateText(job.state)} · ${fmtTs(job.start_ts)} → ${job.end_ts ? fmtTs(job.end_ts) : '进行中'}`,
+    job.start_incomplete ? '开始时间不完整：服务上线时这单已经在打。' : '',
+    `文件：${FILE_STATUS[job.file_status] || job.file_status || '尚未读取'}`,
+    `摄像头：${job.camera_status || '未抓取'}（抓不到也不影响这条记录）`,
+    `材料成本 ${job.cost_complete ? Number(job.material_cost).toFixed(2) + ' 元' : '待补全'}`,
+    job.electricity_cost != null ? `电费 ${Number(job.electricity_cost).toFixed(2)} 元` : '未计电费',
+    job.labor_cost != null ? `人工 ${Number(job.labor_cost).toFixed(2)} 元` : '未计人工'
+  ];
+  bits.filter(Boolean).forEach(text => box.append(el('div', '', text)));
+  (job.usages || []).forEach(row => {
+    box.append(el('div', '', `${row.slot || '未对应槽位'} · ${row.material || '未知材料'} · ${gramsText(row.grams)} · ${row.meters != null ? Number(row.meters).toFixed(2) + ' m · ' : ''}${SOURCE_TEXT[row.source] || row.source} · 标签 ${row.tag_uid || '无'}`));
+  });
+}
+$('#jobs-refresh').onclick = () => loadJobs();
+
+async function loadReports(){
+  reportCache = await jget('/api/reports');
+  if (!spoolCache.length) await loadSpools();
+  renderReport();
+}
+function renderReport(){
+  const data = reportCache || {};
+  const rows = data[reportView] || [];
+  if (reportView === 'models'){
+    fillTable($('#report-table'), ['模型','次数','总克数','总成本','平均','最低','最高','最近用料'], rows.map(item => [
+      item.task_name,
+      item.print_count,
+      gramsText(item.total_grams),
+      item.cost_complete ? money(item.total_cost, true) : `待补全${item.partial_cost != null ? '（已算清 ' + Number(item.partial_cost).toFixed(2) + '）' : ''}`,
+      item.avg_cost != null ? Number(item.avg_cost).toFixed(2) : '—',
+      item.min_cost != null ? Number(item.min_cost).toFixed(2) : '—',
+      item.max_cost != null ? Number(item.max_cost).toFixed(2) : '—',
+      (item.last_spools || []).map(spool => `${spool.material || spool.tag_uid || '料'} ${gramsText(spool.grams)}`).join('；') || '—'
+    ]));
+    return;
+  }
+  if (reportView === 'spools'){
+    fillTable($('#report-table'), ['耗材','标称','已用','剩余','成本','用过的模型'], rows.map(item => [
+      [item.material, item.brand, item.tag_uid].filter(Boolean).join(' · ') || ('#' + item.spool_id),
+      item.nominal_weight_g != null ? `${item.nominal_weight_g} g` : '—',
+      gramsText(item.used_grams),
+      item.remaining_grams == null ? '未知' : `${item.remaining_grams} g（${item.remaining_source === 'printer' ? '打印机余量' : '账本'}）`,
+      item.cost_complete ? Number(item.cost).toFixed(2) : '待补全',
+      (item.models || []).map(model => `${model.task_name} ${gramsText(model.grams)}`).join('；') || '—'
+    ]));
+    return;
+  }
+  fillTable($('#report-table'), ['分组','次数','克数','成本'], rows.map(item => [
+    item.key || item.task_name,
+    item.print_count != null ? item.print_count : '—',
+    gramsText(item.total_grams),
+    item.cost_complete ? money(item.total_cost, true) : '待补全'
+  ]));
+}
+$('#report-tabs').onclick = (event) => {
+  const btn = event.target.closest('button');
+  if (!btn) return;
+  reportView = btn.dataset.report;
+  $$('#report-tabs button').forEach(item => item.classList.toggle('on', item === btn));
+  renderReport();
+};
+$('#reports-refresh').onclick = () => loadReports();
+
+async function runTrace(){
+  const box = $('#trace-box');
+  box.replaceChildren();
+  const spoolId = $('#trace-spool').value;
+  const model = $('#trace-model').value.trim();
+  if (!spoolId && !model){
+    box.textContent = '选择耗材或输入模型名称。';
+    return;
+  }
+  const params = new URLSearchParams();
+  if (spoolId) params.set('spool_id', spoolId);
+  if (model) params.set('task_name', model);
+  const data = await jget('/api/trace?' + params.toString());
+  if (data.spool){
+    box.append(el('div', '', '这个耗材打过：'));
+    if (!(data.spool.models || []).length) box.append(el('div', '', '还没有打印记录'));
+    (data.spool.models || []).forEach(item => box.append(el('div', '', `${item.task_name} · ${item.prints} 次 · ${gramsText(item.grams)}`)));
+  }
+  if (data.model){
+    box.append(el('div', '', `模型「${data.model.task_name || model}」用过：`));
+    if (!(data.model.spools || []).length) box.append(el('div', '', '没有对上耗材'));
+    (data.model.spools || []).forEach(item => {
+      box.append(el('div', '', `${item.material || '未知材料'} · 标签 ${item.tag_uid || '无'} · ${gramsText(item.grams)} · ${item.prints} 次`));
+    });
+  }
+}
+$('#trace-spool-go').onclick = () => runTrace();
+$('#trace-model-go').onclick = () => runTrace();
 
 // 初始化
 loadConfig().then(() => {

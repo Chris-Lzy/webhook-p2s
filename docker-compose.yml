@@ -10,4 +10,5 @@ services:
       # 推送时间段按容器本地时区计算；镜像默认也是 Asia/Shanghai
       - TZ=Asia/Shanghai
     volumes:
+      # 配置、耗材库 SQLite（inventory.db）和任务图片（archive/）都在这个目录里
       - ./data:/app/data

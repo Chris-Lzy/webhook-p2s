@@ -25,10 +25,14 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 
+from filament import SlotTracker, active_slot_key, parse_slots
+from filesource import capture_camera_still, fetch_print_metadata
+from store import Store
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("monitor")
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 PORT = int(os.environ.get("PORT", "8787"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", str(Path(__file__).parent / "data")))
@@ -36,7 +40,7 @@ CONFIG_PATH = DATA_DIR / "config.json"
 MEDIA_DIR = DATA_DIR / "media"
 MAX_PRINTERS = 1000
 MAX_WINDOWS = 8
-WINDOW_EVENTS = ("start", "finish", "failed", "pause", "resume", "offline", "progress")
+WINDOW_EVENTS = ("start", "finish", "failed", "pause", "resume", "offline", "progress", "low_remain")
 
 STATE_TEXT = {
     "IDLE": "空闲",
@@ -68,6 +72,14 @@ DEFAULT_CONFIG = {
         "windows": [],
     },
     "camera": {"enabled": False, "snapshot": True, "clip": True, "clip_seconds": 5},
+    "filament": {
+        "low_remain_enabled": True,
+        "low_remain_pct": 10,
+        "electricity_per_hour": None,
+        "labor_per_hour": None,
+        "image_max_age_days": 90,
+        "image_max_count": 400,
+    },
 }
 
 lock = threading.RLock()
@@ -233,7 +245,10 @@ def normalize_windows(raw, strict=False):
         else:
             days = sorted(window_weekdays({"weekdays": item.get("weekdays")}))
         if isinstance(item.get("events"), dict):
-            events = {key: bool(item["events"].get(key, False)) for key in WINDOW_EVENTS}
+            events = {
+                key: bool(item["events"][key]) if key in item["events"] else key == "low_remain"
+                for key in WINDOW_EVENTS
+            }
         elif strict:
             return [], "时间段需要选择推送事件"
         else:
@@ -305,7 +320,7 @@ def load_config():
         log.warning("读取配置失败: %s", e)
         return
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
-    for sec in ("dingtalk", "wecom", "feishu", "notify", "camera"):
+    for sec in ("dingtalk", "wecom", "feishu", "notify", "camera", "filament"):
         if isinstance(saved.get(sec), dict):
             deep_merge(cfg[sec], saved[sec])
     items = saved.get("printers")
@@ -423,6 +438,54 @@ def dingtalk_send(title, text, force=False):
         return False, f"钉钉发送失败: {e}"
 
 
+_MD_TOKEN = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)|\[([^\]]+)\]\(([^)]+)\)|\*\*([^*]+)\*\*")
+
+
+def format_wecom_markdown(text):
+    """企业微信 markdown 能显示加粗，不能显示图片。图片改成链接并说明。"""
+
+    def repl(match):
+        if match.group(1) is not None:
+            alt = match.group(1).strip() or "查看快照"
+            url = match.group(2).strip()
+            return f"[{alt}]({url})（企业微信不能直接显示图片）"
+        return match.group(0)
+
+    return _MD_TOKEN.sub(repl, text or "")
+
+
+def feishu_rich_lines(text):
+    """飞书富文本：加粗用文本样式，图片用链接。自定义机器人不能嵌外链图片。"""
+    paragraphs = []
+    for line in (text or "").splitlines():
+        if not line.strip():
+            continue
+        paragraphs.append(_feishu_line(line))
+    if not paragraphs:
+        paragraphs.append([{"tag": "text", "text": ""}])
+    return paragraphs
+
+
+def _feishu_line(line):
+    elements = []
+    pos = 0
+    for match in _MD_TOKEN.finditer(line):
+        if match.start() > pos:
+            elements.append({"tag": "text", "text": line[pos:match.start()]})
+        if match.group(1) is not None:
+            alt = match.group(1).strip() or "查看快照"
+            elements.append({"tag": "a", "text": alt, "href": match.group(2).strip()})
+            elements.append({"tag": "text", "text": "（飞书机器人不能直接展示外链图片）"})
+        elif match.group(3) is not None:
+            elements.append({"tag": "a", "text": match.group(3), "href": match.group(4).strip()})
+        else:
+            elements.append({"tag": "text", "text": match.group(5), "style": ["bold"]})
+        pos = match.end()
+    if pos < len(line):
+        elements.append({"tag": "text", "text": line[pos:]})
+    return elements or [{"tag": "text", "text": line}]
+
+
 def wecom_send(title, text, force=False):
     with lock:
         w = dict(config.get("wecom", {}))
@@ -436,7 +499,7 @@ def wecom_send(title, text, force=False):
         return False, "未配置企业微信 webhook"
     body = {
         "msgtype": "markdown",
-        "markdown": {"content": f"### {title}\n\n{text}"},
+        "markdown": {"content": f"### {title}\n\n{format_wecom_markdown(text)}"},
     }
     try:
         r = requests.post(webhook, json=body, timeout=10)
@@ -466,7 +529,7 @@ def feishu_send(title, text, force=False):
             "post": {
                 "zh_cn": {
                     "title": title,
-                    "content": [[{"tag": "text", "text": text}]],
+                    "content": feishu_rich_lines(text),
                 }
             }
         },
@@ -653,6 +716,208 @@ def attach_media(pid, tag, text):
     return "\n\n".join(parts)
 
 
+_store = None
+_trackers = {}
+_tracker_guard = threading.Lock()
+_fetch_slots = threading.BoundedSemaphore(4)
+
+
+def get_store():
+    global _store
+    if _store is None:
+        _store = Store(DATA_DIR / "inventory.db", DATA_DIR / "archive")
+    return _store
+
+
+def report_tz_name():
+    tz = os.environ.get("TZ", "").strip()
+    if tz:
+        return tz
+    now = datetime.now().astimezone()
+    key = getattr(now.tzinfo, "key", None)
+    return key or "Asia/Shanghai"
+
+
+def filament_settings():
+    with lock:
+        raw = dict(config.get("filament") or {})
+    raw.setdefault("low_remain_enabled", True)
+    raw.setdefault("low_remain_pct", 10)
+    raw.setdefault("electricity_per_hour", None)
+    raw.setdefault("labor_per_hour", None)
+    raw.setdefault("image_max_age_days", 90)
+    raw.setdefault("image_max_count", 400)
+    return raw
+
+
+def _tracker_for(pid):
+    with _tracker_guard:
+        tracker = _trackers.get(pid)
+        if tracker is None:
+            tracker = SlotTracker()
+            _trackers[pid] = tracker
+        return tracker
+
+
+def _current_slots(pid):
+    with _tracker_guard:
+        tracker = _trackers.get(pid)
+        if not tracker:
+            return [], None
+        return list(tracker.prev.values()), tracker.active_slot
+
+
+def _task_snapshot(pid):
+    status = get_printer_status(pid)
+    with lock:
+        task = status["subtask_name"] or (Path(status["gcode_file"]).name if status["gcode_file"] else "") or "未知任务"
+        return {
+            "task": task,
+            "gcode": status["gcode_file"] or "",
+            "layer": status["layer_num"],
+            "total": status["total_layer_num"],
+            "percent": status["percent"],
+        }
+
+
+def on_ams_report(pid, print_obj):
+    slots = parse_slots(print_obj)
+    if not slots:
+        return
+    active = active_slot_key(print_obj, slots)
+    tracker = _tracker_for(pid)
+    with _tracker_guard:
+        fed = tracker.feed(slots, active_slot=active)
+        current = list(tracker.prev.values())
+    if not fed["dirty"] and not fed["changes"]:
+        return
+    info = pcfg_by_id(pid)
+    settings = filament_settings()
+    result = get_store().apply_observation(
+        pid,
+        info["name"],
+        fed["dirty"],
+        fed["changes"],
+        settings.get("low_remain_pct", 10),
+        bool(settings.get("low_remain_enabled", True)),
+    )
+    job_id = get_store().open_job_id(pid)
+    if job_id and current:
+        get_store().seed_baselines_if_empty(job_id, current)
+    for alert in result["alerts"]:
+        remain = alert.get("remain_pct")
+        try:
+            remain_text = f"{float(remain):g}%"
+        except (TypeError, ValueError):
+            remain_text = "未知"
+        lines = [
+            f"**材料**：{alert.get('material') or '未知'}",
+            f"**剩余**：{remain_text}（阈值 {float(alert.get('threshold') or 0):g}%）",
+            f"**槽位**：{alert.get('slot') or ''}",
+        ]
+        if alert.get("tag_uid"):
+            lines.append(f"**标签**：{alert['tag_uid']}")
+        if alert.get("tray_uuid"):
+            lines.append(f"**UUID**：{alert['tray_uuid']}")
+        notify(
+            alert.get("printer_name") or info["name"],
+            "耗材余量偏低",
+            "\n\n".join(lines),
+            tag="filament",
+            event="low_remain",
+            printer_id=pid,
+        )
+
+
+def begin_job_archive(pid, incomplete=False):
+    info = pcfg_by_id(pid)
+    snap = _task_snapshot(pid)
+    slots, active = _current_slots(pid)
+    store = get_store()
+    existed = store.open_job_id(pid)
+    job_id = store.open_job(
+        pid, info["name"], snap["task"], snap["gcode"], slots, active,
+        snap["layer"], snap["total"], snap["percent"], start_incomplete=incomplete,
+    )
+    if slots:
+        store.seed_baselines_if_empty(job_id, slots)
+    if not existed:
+        threading.Thread(
+            target=_enrich_job, args=(pid, job_id, snap["gcode"], snap["task"]), daemon=True,
+        ).start()
+    return job_id
+
+
+def touch_job_archive(pid):
+    snap = _task_snapshot(pid)
+    slots, _active = _current_slots(pid)
+    store = get_store()
+    job_id = store.touch_job(
+        pid, snap["task"], snap["gcode"], snap["layer"], snap["total"], snap["percent"],
+    )
+    if job_id and slots:
+        store.seed_baselines_if_empty(job_id, slots)
+    return job_id
+
+
+def finish_job_archive(pid, state):
+    store = get_store()
+    if not store.open_job_id(pid):
+        begin_job_archive(pid, incomplete=True)
+    slots, active = _current_slots(pid)
+    settings = filament_settings()
+    job = store.close_job(
+        pid, state, slots, active,
+        settings.get("electricity_per_hour"), settings.get("labor_per_hour"),
+    )
+    if not job:
+        return None
+    add_event("info", f"{pcfg_by_id(pid)['name']} 已归档任务「{job.get('task_name') or '未命名'}」")
+    threading.Thread(target=_enrich_camera, args=(pid, job["id"]), daemon=True).start()
+    return job
+
+
+def _enrich_job(pid, job_id, gcode_file, task_name):
+    if not _fetch_slots.acquire(timeout=90):
+        return
+    try:
+        info = pcfg_by_id(pid)
+        store = get_store()
+        try:
+            fetched = fetch_print_metadata(
+                info.get("host") or "", info.get("access_code") or "",
+                gcode_file=gcode_file, task_name=task_name,
+            )
+            slots, _active = _current_slots(pid)
+            store.apply_file_fetch(
+                job_id, fetched.filaments, fetched.preview, fetched.preview_ext, fetched.reason, slots,
+            )
+        except Exception:
+            log.info("%s 打印文件归档失败", info.get("name") or pid)
+            store.mark_file(job_id, "error")
+        _enrich_camera(pid, job_id)
+        settings = filament_settings()
+        store.prune_images(settings.get("image_max_age_days"), settings.get("image_max_count"))
+    finally:
+        _fetch_slots.release()
+
+
+def _enrich_camera(pid, job_id):
+    info = pcfg_by_id(pid)
+    store = get_store()
+    dest = store.image_dir / f"job{job_id}_camera.jpg"
+    try:
+        ok, how = capture_camera_still(info.get("host") or "", info.get("access_code") or "", dest)
+    except Exception:
+        ok, how = False, "error"
+    if ok:
+        store.attach_camera(job_id, dest.name, how)
+        return
+    job = store.get_job(job_id)
+    if not job or not job.get("camera_path"):
+        store.mark_camera(job_id, how)
+
+
 class PrinterMonitor:
     def __init__(self, pid):
         self.pid = pid
@@ -745,10 +1010,25 @@ class PrinterMonitor:
         except Exception as e:
             log.warning("%s 处理消息出错: %s", pcfg_by_id(self.pid)["name"], e)
 
+    def _touch_job_later(self):
+        now = time.time()
+        if now - getattr(self, "_job_touch_ts", 0) < 15:
+            return
+        self._job_touch_ts = now
+        try:
+            touch_job_archive(self.pid)
+        except Exception:
+            log.warning("%s 更新任务进度失败", pcfg_by_id(self.pid)["name"])
+
     def _handle(self, data):
         p = data.get("print") or {}
         if not isinstance(p, dict):
             return
+        try:
+            if "ams" in p or "vt_tray" in p:
+                on_ams_report(self.pid, p)
+        except Exception:
+            log.warning("%s 耗材数据处理失败", pcfg_by_id(self.pid)["name"])
         gs = p.get("gcode_state") or ""
         n = config["notify"]
         s = get_printer_status(self.pid)
@@ -776,6 +1056,9 @@ class PrinterMonitor:
             s["error_code"] = str(p.get("print_error") or p.get("error_code") or "")
             pct = s["percent"] or 0
             rt = fmt_minutes(s["remaining_time"])
+            running_now = gs == "RUNNING" or (not gs and s["gcode_state"] == "RUNNING")
+        if running_now:
+            self._touch_job_later()
         if not gs or gs == prev:
             return
 
@@ -790,6 +1073,10 @@ class PrinterMonitor:
                 s["print_start_ts"] = time.time()
             step = int(n.get("progress_step") or 0)
             self.last_bucket = pct // step if step > 0 else 0
+            try:
+                begin_job_archive(self.pid, incomplete=(prev == ""))
+            except Exception:
+                log.warning("%s 建立任务归档失败", name)
             if n.get("on_start"):
                 notify(name, "开始打印", f"**任务**：{task_name()}\n\n**进度**：{pct}%",
                        tag="start", event="start", with_media=True, printer_id=self.pid)
@@ -805,18 +1092,31 @@ class PrinterMonitor:
             if start_ts:
                 mins = int((time.time() - start_ts) // 60)
                 dur = f"\n\n**耗时**：{fmt_minutes(mins) or '0分钟'}"
+            try:
+                finish_job_archive(self.pid, "finished")
+            except Exception:
+                log.warning("%s 结束任务归档失败", name)
             if n.get("on_finish"):
                 notify(name, "打印完成", f"**任务**：{task_name()}{dur}",
                        tag="finish", event="finish", with_media=True, printer_id=self.pid)
         elif gs == "FAILED":
             with lock:
                 err = s["error_code"]
+            try:
+                finish_job_archive(self.pid, "failed")
+            except Exception:
+                log.warning("%s 结束任务归档失败", name)
             if n.get("on_failed"):
                 notify(name, "打印失败", f"**任务**：{task_name()}\n\n**错误码**：{err or '未知'}",
                        tag="fail", event="failed", with_media=True, printer_id=self.pid)
         elif gs == "PAUSED" and prev != "PAUSED" and n.get("on_pause"):
             notify(name, "打印已暂停", f"**任务**：{task_name()}",
                    tag="pause", event="pause", with_media=True, printer_id=self.pid)
+        elif gs == "IDLE" and prev in ("RUNNING", "PAUSED", "PREPARE", "SLICING"):
+            try:
+                finish_job_archive(self.pid, "cancelled")
+            except Exception:
+                log.warning("%s 结束任务归档失败", name)
 
         if gs == "RUNNING":
             step = int(n.get("progress_step") or 0)
@@ -997,7 +1297,14 @@ def scan_lan_printers(subnet_str=None):
 
 @asynccontextmanager
 async def lifespan(app):
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    get_store()
     load_config()
+    try:
+        settings = filament_settings()
+        get_store().prune_images(settings.get("image_max_age_days"), settings.get("image_max_count"))
+    except Exception:
+        log.warning("清理归档图片失败")
     start_enabled()
     yield
     # Shutdown
@@ -1062,6 +1369,7 @@ def api_get_config():
         },
         "notify": cfg["notify"],
         "camera": cfg["camera"],
+        "filament": cfg.get("filament") or {},
         "version": __version__,
         "timezone": server_tz_label(),
         "local_subnet": auto_subnet,
@@ -1170,12 +1478,48 @@ async def api_post_config(req: Request):
         except (TypeError, ValueError):
             pass
 
+    fil = body.get("filament")
+    if isinstance(fil, dict):
+        cur_f = cur.setdefault("filament", json.loads(json.dumps(DEFAULT_CONFIG["filament"])))
+        if "low_remain_enabled" in fil:
+            cur_f["low_remain_enabled"] = bool(fil["low_remain_enabled"])
+        if "low_remain_pct" in fil:
+            try:
+                cur_f["low_remain_pct"] = max(0.0, min(100.0, float(fil["low_remain_pct"])))
+            except (TypeError, ValueError):
+                pass
+        for key in ("electricity_per_hour", "labor_per_hour"):
+            if key not in fil:
+                continue
+            raw = fil.get(key)
+            if raw is None or raw == "":
+                cur_f[key] = None
+            else:
+                try:
+                    cur_f[key] = max(0.0, float(raw))
+                except (TypeError, ValueError):
+                    pass
+        for key, hi in (("image_max_age_days", 3650), ("image_max_count", 100000)):
+            if key not in fil:
+                continue
+            try:
+                cur_f[key] = max(0, min(hi, int(float(fil[key]))))
+            except (TypeError, ValueError):
+                pass
+
     with lock:
         config = cur
         save_config()
         get_or_create_monitors()
 
     add_event("info", "配置已保存")
+    if isinstance(fil, dict):
+        try:
+            saved_f = cur["filament"]
+            get_store().recompute_rates(saved_f.get("electricity_per_hour"), saved_f.get("labor_per_hour"))
+            get_store().prune_images(saved_f.get("image_max_age_days"), saved_f.get("image_max_count"))
+        except Exception:
+            log.warning("更新耗材成本设置失败")
 
     # 根据配置变化重启/停止监视器
     with lock:
@@ -1443,6 +1787,119 @@ async def api_test_channel(req: Request):
 def api_test_dingtalk():
     ok, msg = dingtalk_send("测试消息", "这是 webhook-p2s 发出的测试消息。", force=True)
     return {"ok": ok, "msg": msg}
+
+
+@app.post("/api/test/push")
+def api_test_push():
+    """一键测试当前已启用的全部渠道，而不是只打钉钉。"""
+    with lock:
+        channels = []
+        if config["dingtalk"].get("enabled", True):
+            channels.append("dingtalk")
+        if config.get("wecom", {}).get("enabled"):
+            channels.append("wecom")
+        if config.get("feishu", {}).get("enabled"):
+            channels.append("feishu")
+    if not channels:
+        return {"ok": False, "msg": "没有已启用的推送渠道"}
+    parts = []
+    ok_all = True
+    for channel in channels:
+        result = push_to_all_channels("测试消息", "这是 webhook-p2s 发出的测试消息。", force=True, channel=channel)
+        ok, msg = result[0]
+        parts.append(msg)
+        ok_all = ok_all and bool(ok)
+    return {"ok": ok_all, "msg": "；".join(parts)}
+
+
+@app.get("/archive/{name}")
+def api_archive(name: str):
+    root = get_store().image_dir.resolve()
+    target = (root / Path(name).name).resolve()
+    if target.parent != root or not target.is_file():
+        raise HTTPException(status_code=404)
+    return FileResponse(target)
+
+
+@app.get("/api/spools")
+def api_spools(q: str = ""):
+    return {"spools": get_store().list_spools(q)}
+
+
+@app.post("/api/spools")
+async def api_spool_create(req: Request):
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    try:
+        spool = get_store().create_manual(body or {})
+    except ValueError as exc:
+        return {"ok": False, "msg": str(exc)}
+    return {"ok": True, "spool": spool}
+
+
+@app.get("/api/spools/{spool_id}")
+def api_spool_detail(spool_id: int):
+    spool = get_store().get_spool(spool_id)
+    if not spool:
+        raise HTTPException(status_code=404, detail="耗材不存在")
+    return spool
+
+
+@app.post("/api/spools/{spool_id}")
+async def api_spool_update(spool_id: int, req: Request):
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    try:
+        spool = get_store().update_spool(spool_id, body or {})
+    except ValueError as exc:
+        return {"ok": False, "msg": str(exc)}
+    return {"ok": True, "spool": spool}
+
+
+@app.get("/api/loads")
+def api_loads():
+    return {
+        "loads": get_store().list_loads(),
+        "note": "装填时间只在本服务在线、并且亲眼看到槽位从空变为有料或标签变化时记录。离线期间发生的装填无法还原真实时间。",
+    }
+
+
+@app.get("/api/jobs")
+def api_jobs():
+    return {"jobs": get_store().list_jobs()}
+
+
+@app.get("/api/jobs/{job_id}")
+def api_job_detail(job_id: int):
+    job = get_store().get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return job
+
+
+@app.post("/api/jobs/{job_id}/recompute")
+def api_job_recompute(job_id: int):
+    settings = filament_settings()
+    job = get_store().recompute_job(
+        job_id, settings.get("electricity_per_hour"), settings.get("labor_per_hour"),
+    )
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return {"ok": True, "job": job}
+
+
+@app.get("/api/reports")
+def api_reports():
+    return get_store().reports(report_tz_name())
+
+
+@app.get("/api/trace")
+def api_trace(task_name: str = "", spool_id: int = 0):
+    return get_store().trace(task_name=task_name, spool_id=spool_id or None)
 
 
 if __name__ == "__main__":
