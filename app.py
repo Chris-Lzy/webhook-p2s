@@ -16,7 +16,7 @@ import time
 import urllib.parse
 from collections import deque
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import paho.mqtt.client as mqtt
@@ -32,11 +32,15 @@ from store import Store
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("monitor")
 
-__version__ = "2.1.1"
+__version__ = "2.2.0"
+
+# 固定北京时间（UTC+8），不依赖容器/宿主时区设置
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 PORT = int(os.environ.get("PORT", "8787"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", str(Path(__file__).parent / "data")))
 CONFIG_PATH = DATA_DIR / "config.json"
+CREDENTIALS_PATH = DATA_DIR / "credentials.json"
 MEDIA_DIR = DATA_DIR / "media"
 MAX_PRINTERS = 1000
 MAX_WINDOWS = 8
@@ -616,6 +620,31 @@ def fmt_minutes(m):
     return f"{m // 60}小时{m % 60}分钟" if m >= 60 else f"{m}分钟"
 
 
+def fmt_finish_at(remaining_min, now_ts=None):
+    """根据剩余分钟数推算预计完成时刻，返回北京时间 HH:MM；跨天时带日期。"""
+    try:
+        mins = int(remaining_min)
+    except (TypeError, ValueError):
+        return ""
+    if mins <= 0:
+        return ""
+    base = datetime.fromtimestamp(now_ts, BEIJING_TZ) if now_ts else datetime.now(BEIJING_TZ)
+    finish = base + timedelta(minutes=mins)
+    return finish.strftime("%H:%M") if finish.date() == base.date() else finish.strftime("%m-%d %H:%M")
+
+
+def remaining_minutes(s):
+    """从状态字典取剩余分钟数（单位：分钟）。兼容多种固件字段名。"""
+    for key in ("remaining_time", "remain_time", "mc_remaining_time"):
+        try:
+            v = s.get(key)
+            if v is not None and int(v) > 0:
+                return int(v)
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
 def rtsp_url(p):
     code = urllib.parse.quote(p["access_code"], safe="")
     return f"rtsp://bblp:{code}@{p['host']}:322/stream"
@@ -1043,6 +1072,18 @@ class PrinterMonitor:
                         s[key] = int(p[key])
                     except (TypeError, ValueError):
                         pass
+            # 拓竹固件实际用 remain_time / mc_remaining_time 上报剩余分钟，
+            # 不同固件/机型字段名不一。只要本帧上报了这些字段就以它为准，
+            # 归一化到 remaining_time；否则保留原值（兼容真正用 remaining_time 的机型）。
+            for rk in ("remain_time", "mc_remaining_time", "remaining_time"):
+                if p.get(rk) is not None:
+                    try:
+                        rv = int(p[rk])
+                        if rv > 0:
+                            s["remaining_time"] = rv
+                            break
+                    except (TypeError, ValueError):
+                        pass
             for key in ("nozzle_temper", "bed_temper"):
                 if p.get(key) is not None:
                     try:
@@ -1059,8 +1100,6 @@ class PrinterMonitor:
             running_now = gs == "RUNNING" or (not gs and s["gcode_state"] == "RUNNING")
         if running_now:
             self._touch_job_later()
-        if not gs or gs == prev:
-            return
 
         name = pcfg_by_id(self.pid)["name"]
 
@@ -1068,64 +1107,77 @@ class PrinterMonitor:
             with lock:
                 return s["subtask_name"] or Path(s["gcode_file"]).name or "未知任务"
 
-        if gs == "RUNNING" and prev in ("", "IDLE", "FINISH", "FAILED", "SUCCEEDED"):
-            with lock:
-                s["print_start_ts"] = time.time()
-            step = int(n.get("progress_step") or 0)
-            self.last_bucket = pct // step if step > 0 else 0
-            try:
-                begin_job_archive(self.pid, incomplete=(prev == ""))
-            except Exception:
-                log.warning("%s 建立任务归档失败", name)
-            if n.get("on_start"):
-                notify(name, "开始打印", f"**任务**：{task_name()}\n\n**进度**：{pct}%",
-                       tag="start", event="start", with_media=True, printer_id=self.pid)
+        # 剩余分钟 + 预计完成时刻（北京时间）——每个推送都带上
+        remain_mins = remaining_minutes(s)
+        finish_at = fmt_finish_at(remain_mins)
+        time_bits = []
+        if remain_mins is not None:
+            time_bits.append(f"**剩余时间**：约 {remain_mins} 分钟")
+        if finish_at:
+            time_bits.append(f"**预计完成**：{finish_at}（北京时间）")
+        time_line = ("\n\n" + "\n\n".join(time_bits)) if time_bits else ""
 
-        if gs == "RUNNING" and prev == "PAUSED" and n.get("on_resume"):
-            notify(name, "打印已恢复", f"**任务**：{task_name()}",
+        # 状态切换事件：只在 gcode_state 真正变化时触发
+        if gs and gs != prev:
+            if gs == "RUNNING" and prev in ("", "IDLE", "FINISH", "FAILED", "SUCCEEDED"):
+                with lock:
+                    s["print_start_ts"] = time.time()
+                step = int(n.get("progress_step") or 0)
+                self.last_bucket = pct // step if step > 0 else 0
+                try:
+                    begin_job_archive(self.pid, incomplete=(prev == ""))
+                except Exception:
+                    log.warning("%s 建立任务归档失败", name)
+                if n.get("on_start"):
+                    notify(name, "开始打印", f"**任务**：{task_name()}\n\n**进度**：{pct}%{time_line}",
+                           tag="start", event="start", with_media=True, printer_id=self.pid)
+
+            if gs == "RUNNING" and prev == "PAUSED" and n.get("on_resume"):
+                notify(name, "打印已恢复", f"**任务**：{task_name()}{time_line}",
                        tag="resume", event="resume", with_media=True, printer_id=self.pid)
 
-        if gs in ("FINISH", "SUCCEEDED"):
-            with lock:
-                start_ts = s["print_start_ts"]
-            dur = ""
-            if start_ts:
-                mins = int((time.time() - start_ts) // 60)
-                dur = f"\n\n**耗时**：{fmt_minutes(mins) or '0分钟'}"
-            try:
-                finish_job_archive(self.pid, "finished")
-            except Exception:
-                log.warning("%s 结束任务归档失败", name)
-            if n.get("on_finish"):
-                notify(name, "打印完成", f"**任务**：{task_name()}{dur}",
-                       tag="finish", event="finish", with_media=True, printer_id=self.pid)
-        elif gs == "FAILED":
-            with lock:
-                err = s["error_code"]
-            try:
-                finish_job_archive(self.pid, "failed")
-            except Exception:
-                log.warning("%s 结束任务归档失败", name)
-            if n.get("on_failed"):
-                notify(name, "打印失败", f"**任务**：{task_name()}\n\n**错误码**：{err or '未知'}",
-                       tag="fail", event="failed", with_media=True, printer_id=self.pid)
-        elif gs == "PAUSED" and prev != "PAUSED" and n.get("on_pause"):
-            notify(name, "打印已暂停", f"**任务**：{task_name()}",
-                   tag="pause", event="pause", with_media=True, printer_id=self.pid)
-        elif gs == "IDLE" and prev in ("RUNNING", "PAUSED", "PREPARE", "SLICING"):
-            try:
-                finish_job_archive(self.pid, "cancelled")
-            except Exception:
-                log.warning("%s 结束任务归档失败", name)
+            if gs in ("FINISH", "SUCCEEDED"):
+                with lock:
+                    start_ts = s["print_start_ts"]
+                dur = ""
+                if start_ts:
+                    mins = int((time.time() - start_ts) // 60)
+                    dur = f"\n\n**耗时**：{fmt_minutes(mins) or '0分钟'}"
+                try:
+                    finish_job_archive(self.pid, "finished")
+                except Exception:
+                    log.warning("%s 结束任务归档失败", name)
+                if n.get("on_finish"):
+                    notify(name, "打印完成", f"**任务**：{task_name()}{dur}",
+                           tag="finish", event="finish", with_media=True, printer_id=self.pid)
+            elif gs == "FAILED":
+                with lock:
+                    err = s["error_code"]
+                try:
+                    finish_job_archive(self.pid, "failed")
+                except Exception:
+                    log.warning("%s 结束任务归档失败", name)
+                if n.get("on_failed"):
+                    notify(name, "打印失败", f"**任务**：{task_name()}\n\n**错误码**：{err or '未知'}",
+                           tag="fail", event="failed", with_media=True, printer_id=self.pid)
+            elif gs == "PAUSED" and prev != "PAUSED" and n.get("on_pause"):
+                notify(name, "打印已暂停", f"**任务**：{task_name()}{time_line}",
+                       tag="pause", event="pause", with_media=True, printer_id=self.pid)
+            elif gs == "IDLE" and prev in ("RUNNING", "PAUSED", "PREPARE", "SLICING"):
+                try:
+                    finish_job_archive(self.pid, "cancelled")
+                except Exception:
+                    log.warning("%s 结束任务归档失败", name)
 
-        if gs == "RUNNING":
+        # 进度节点推送：独立于状态切换，只要处于打印中就检查（修复状态不变时进度不推送）
+        if running_now:
             step = int(n.get("progress_step") or 0)
             if step > 0:
                 b = pct // step
                 if b > self.last_bucket:
                     self.last_bucket = b
                     notify(name, f"打印进度 {b * step}%",
-                           f"**任务**：{task_name()}\n\n**剩余时间**：{rt or '未知'}",
+                           f"**任务**：{task_name()}\n\n**进度**：{pct}%{time_line}",
                            tag="print", event="progress", with_media=True, printer_id=self.pid)
 
 
@@ -1648,6 +1700,8 @@ def api_status():
                 "online": bool(s["connected"] and s["last_msg_ts"] and now - s["last_msg_ts"] < 120),
                 "percent": s["percent"],
                 "remaining_time": s["remaining_time"],
+                "remaining_mins": remaining_minutes(s),
+                "finish_at": fmt_finish_at(remaining_minutes(s)) if s["gcode_state"] == "RUNNING" else None,
                 "layer_num": s["layer_num"],
                 "total_layer_num": s["total_layer_num"],
                 "nozzle_temper": s["nozzle_temper"],

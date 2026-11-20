@@ -91,7 +91,9 @@
 
   .pbar{height:5px;background:#edf2ef;border-radius:999px;overflow:hidden}
   .pbar>i{display:block;height:100%;width:0;background:var(--g);border-radius:999px;transition:width .4s}
-  .pmeta{font-size:11px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:4px;min-height:14px}
+  .pmeta{font-size:11px;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:4px;min-height:14px}
+  .ptime{font-size:10.5px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;min-height:13px}
+  .ptime b{color:var(--g);font-weight:600}
   .ops{display:flex;gap:5px;justify-content:flex-end}
 
   button{padding:8px 16px;border-radius:9px;border:1px solid var(--bd);background:#fff;font-size:12.5px;cursor:pointer;font-family:inherit;color:var(--tx);transition:background .15s,border-color .15s}
@@ -563,7 +565,9 @@ function renderPrintersTable(){
     bar.append(fill);
 
     const meta = el('div', 'pmeta', getMetaText(s));
-    tdProg.append(bar, meta);
+    const ptime = el('div', 'ptime');
+    ptime.innerHTML = getTimeText(s);
+    tdProg.append(bar, meta, ptime);
 
     // 操作按钮
     const ops = el('div', 'ops');
@@ -595,7 +599,9 @@ function statusTip(s){
   if (s.nozzle_temper != null) tip.push(`喷嘴 ${s.nozzle_temper}°C`);
   if (s.bed_temper != null) tip.push(`热床 ${s.bed_temper}°C`);
   if (s.elapsed_mins) tip.push(`已用 ${fmtMin(s.elapsed_mins)}`);
-  if (s.remaining_time) tip.push(`剩余 ${fmtMin(s.remaining_time)}`);
+  if (s.remaining_mins != null) tip.push(`剩余 ${s.remaining_mins} 分钟`);
+  else if (s.remaining_time) tip.push(`剩余 ${fmtMin(s.remaining_time)}`);
+  if (s.finish_at) tip.push(`预计完成 ${s.finish_at}（北京时间）`);
   if (s.error_code) tip.push(`错误码 ${s.error_code}`);
   return tip.join(' | ');
 }
@@ -604,6 +610,7 @@ function statusDetail(s){
   if (!s || !s.connected) return '';
   const bits = [];
   if (s.layer_num != null) bits.push(`层 ${s.layer_num}/${s.total_layer_num != null ? s.total_layer_num : '?'}`);
+  if (s.nozzle_temper != null) bits.push(`喷嘴 ${s.nozzle_temper}°C`);
   if (s.bed_temper != null) bits.push(`热床 ${s.bed_temper}°C`);
   const used = fmtMin(s.elapsed_mins);
   if (used) bits.push(`已用 ${used}`);
@@ -657,9 +664,16 @@ function getMetaText(s){
   const parts = [];
   if (s.percent != null) parts.push(`${s.percent}%`);
   if (s.task) parts.push(s.task);
-  if (s.remaining_time) parts.push(`余${fmtMin(s.remaining_time)}`);
-  if (s.nozzle_temper != null) parts.push(`喷嘴${s.nozzle_temper}°C`);
   return parts.length ? parts.join(' · ') : '就绪';
+}
+
+function getTimeText(s){
+  if (!s || !s.connected) return '';
+  const parts = [];
+  if (s.remaining_mins != null) parts.push(`剩余 ${s.remaining_mins} 分钟`);
+  else if (s.remaining_time) parts.push(`剩余 ${fmtMin(s.remaining_time)}`);
+  if (s.finish_at) parts.push(`预计完成 <b>${s.finish_at}</b>`);
+  return parts.join(' · ');
 }
 
 // ----------------- 打印机增删启停 -----------------
@@ -1091,6 +1105,8 @@ async function syncStatus(){
       if (fill && s.percent != null) fill.style.width = Math.min(100, Math.max(0, s.percent)) + '%';
       const meta = tr.querySelector('.pmeta');
       if (meta) meta.textContent = getMetaText(s);
+      const ptime = tr.querySelector('.ptime');
+      if (ptime) ptime.innerHTML = getTimeText(s);
     });
     applyFilter();
   } catch(e){}
