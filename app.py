@@ -40,7 +40,6 @@ BEIJING_TZ = timezone(timedelta(hours=8))
 PORT = int(os.environ.get("PORT", "8787"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", str(Path(__file__).parent / "data")))
 CONFIG_PATH = DATA_DIR / "config.json"
-CREDENTIALS_PATH = DATA_DIR / "credentials.json"
 MEDIA_DIR = DATA_DIR / "media"
 MAX_PRINTERS = 1000
 MAX_WINDOWS = 8
