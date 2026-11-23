@@ -32,7 +32,7 @@ from store import Store
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("monitor")
 
-__version__ = "2.2.0"
+__version__ = "2.2.1"
 
 # 固定北京时间（UTC+8），不依赖容器/宿主时区设置
 BEIJING_TZ = timezone(timedelta(hours=8))
@@ -106,6 +106,10 @@ def blank_status():
         "subtask_name": "",
         "error_code": "",
         "print_start_ts": None,
+        # 当前这一单的身份。空字段表示还没上报，不能拿来判断换了任务。
+        "job_fields": {},
+        "clock_locked": False,
+        "finished_elapsed_mins": None,
     }
 
 
@@ -644,6 +648,181 @@ def remaining_minutes(s):
     return None
 
 
+# 空闲或已结束。从这些状态进入准备/打印才是新的一单；暂停后再 RUNNING 不是。
+_IDLE_PRINT_STATES = frozenset({"", "IDLE", "FINISH", "FAILED", "SUCCEEDED"})
+_ACTIVE_PRINT_STATES = frozenset({"PREPARE", "SLICING", "RUNNING"})
+_PAUSED_PRINT_STATES = frozenset({"PAUSE", "PAUSED"})
+_LIVE_ELAPSED_STATES = _ACTIVE_PRINT_STATES | _PAUSED_PRINT_STATES
+# 刚观察到开打时，只采纳差不多同时的打印机时间戳。再早就是上一单留下的。
+_CLOCK_MATCH_SEC = 3 * 60
+# 同一条 RUNNING 里 gcode_start_time 跳了这么多，才当成换了一单。
+_START_SWITCH_SEC = 30 * 60
+# 服务中途连上、打印机已经在打：允许用打印机的开始时间，但拒绝明显不是时间戳的值。
+_JOIN_MAX_AGE_SEC = 14 * 24 * 3600
+# 耗时不读 mc_print_time。公开报文里没有稳定的「本单已用分钟」；喷嘴 p_t 是累计秒数。
+_START_FROM_STATES = _IDLE_PRINT_STATES | frozenset({"PREPARE", "SLICING"})
+
+
+def parse_gcode_start_time(value, now):
+    """把 gcode_start_time 解析成 unix 秒。
+
+    拓竹上报的是秒级时间戳字符串，个别报文用毫秒。0、空串和纯时长都不是时间戳，
+    解析失败就返回 None，避免减出几十小时的耗时。
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    text = str(value).strip()
+    if not text or text in {"0", "0.0"}:
+        return None
+    try:
+        raw = float(text)
+    except (TypeError, ValueError):
+        return None
+    if raw > 1e14:
+        raw /= 1e6
+    elif raw > 1e11:
+        raw /= 1e3
+    if raw < 1_000_000_000 or raw > 4_102_444_800:
+        return None
+    if raw > float(now) + 24 * 3600:
+        return None
+    return raw
+
+
+def elapsed_minutes(start_ts, now):
+    if start_ts is None:
+        return None
+    try:
+        mins = int((float(now) - float(start_ts)) // 60)
+    except (TypeError, ValueError):
+        return None
+    return max(0, mins)
+
+
+def format_elapsed(mins):
+    if mins is None:
+        return ""
+    return fmt_minutes(mins) or "0分钟"
+
+
+def live_elapsed_minutes(status, now):
+    """状态列用的已用分钟：打印/暂停按当前这一单走，完成后冻结，空闲不再累加。"""
+    state = (status or {}).get("gcode_state") or ""
+    if state in _LIVE_ELAPSED_STATES:
+        return elapsed_minutes(status.get("print_start_ts"), now)
+    if state in ("FINISH", "SUCCEEDED"):
+        return status.get("finished_elapsed_mins")
+    return None
+
+
+def _payload_job_fields(payload, now):
+    out = {}
+    if not isinstance(payload, dict):
+        return out
+    name = payload.get("subtask_name")
+    if isinstance(name, str) and name.strip():
+        out["subtask"] = name.strip()
+    gcode = payload.get("gcode_file")
+    if isinstance(gcode, str) and gcode.strip():
+        out["gcode"] = gcode.strip()
+    task_id = payload.get("task_id")
+    if task_id is not None and str(task_id).strip() not in {"", "0"}:
+        out["task_id"] = str(task_id).strip()
+    if "gcode_start_time" in payload:
+        parsed = parse_gcode_start_time(payload.get("gcode_start_time"), now)
+        if parsed is not None:
+            out["gcode_start"] = parsed
+    return out
+
+
+def _identity_switched(previous, incoming):
+    """已经报过的身份字段换成了另一个值。后补上的任务名不算换单。"""
+    if not previous or not incoming:
+        return False
+    for key in ("subtask", "gcode", "task_id"):
+        old = previous.get(key) or ""
+        new = incoming.get(key) or ""
+        if old and new and old != new:
+            return True
+    old_ts = previous.get("gcode_start")
+    new_ts = incoming.get("gcode_start")
+    if old_ts and new_ts and abs(float(new_ts) - float(old_ts)) > _START_SWITCH_SEC:
+        return True
+    return False
+
+
+def _accept_start_timestamp(parsed, now, joined_mid_print):
+    if parsed is None:
+        return None
+    if parsed > float(now) + 120:
+        return None
+    age = float(now) - parsed
+    if joined_mid_print:
+        if age > _JOIN_MAX_AGE_SEC:
+            return None
+        return parsed
+    if age > _CLOCK_MATCH_SEC:
+        return None
+    return parsed
+
+
+def apply_job_clock(status, payload, prev_state, now):
+    """按当前这一单更新 print_start_ts。换单、从准备进入打印都会重置。
+
+    返回 True 表示这帧是新的一单。上一单的 gcode_start_time 若原样留下，不会被采用。
+    """
+    payload = payload if isinstance(payload, dict) else {}
+    prev_state = prev_state or ""
+    gs = payload.get("gcode_state") or prev_state
+    if gs == "IDLE":
+        status["print_start_ts"] = None
+        status["clock_locked"] = False
+        status["job_fields"] = {}
+        return False
+
+    incoming = _payload_job_fields(payload, now)
+    previous = dict(status.get("job_fields") or {})
+    switched = _identity_switched(previous, incoming)
+    entered = gs in _ACTIVE_PRINT_STATES and prev_state in _IDLE_PRINT_STATES and gs != prev_state
+    active_now = gs in _LIVE_ELAPSED_STATES
+    new_job = active_now and (entered or switched)
+
+    if new_job:
+        joined = prev_state == "" and gs == "RUNNING" and not switched
+        parsed = incoming.get("gcode_start")
+        # 任务名或文件已经换了，但这帧往往还带着上一单的 gcode_start_time。
+        if switched and parsed is not None and abs(float(now) - float(parsed)) > 120:
+            parsed = None
+        accepted = _accept_start_timestamp(parsed, now, joined)
+        status["print_start_ts"] = accepted if accepted is not None else float(now)
+        status["clock_locked"] = accepted is not None
+        fields = {key: incoming[key] for key in ("subtask", "gcode", "task_id") if key in incoming}
+        if accepted is not None:
+            fields["gcode_start"] = accepted
+        status["job_fields"] = fields
+        status["finished_elapsed_mins"] = None
+        return True
+
+    fields = dict(previous)
+    for key in ("subtask", "gcode", "task_id"):
+        if key in incoming:
+            fields[key] = incoming[key]
+    parsed = incoming.get("gcode_start")
+    start_ts = status.get("print_start_ts")
+    if (
+        parsed is not None
+        and start_ts
+        and not status.get("clock_locked")
+        and abs(parsed - float(start_ts)) <= _CLOCK_MATCH_SEC
+        and parsed <= float(now) + 120
+    ):
+        status["print_start_ts"] = parsed
+        status["clock_locked"] = True
+        fields["gcode_start"] = parsed
+    status["job_fields"] = fields
+    return False
+
+
 def rtsp_url(p):
     code = urllib.parse.quote(p["access_code"], safe="")
     return f"rtsp://bblp:{code}@{p['host']}:322/stream"
@@ -1060,15 +1239,24 @@ class PrinterMonitor:
         gs = p.get("gcode_state") or ""
         n = config["notify"]
         s = get_printer_status(self.pid)
+        now_ts = time.time()
         with lock:
             prev = s["gcode_state"]
-            s["last_msg_ts"] = time.time()
+            s["last_msg_ts"] = now_ts
             if gs:
                 s["gcode_state"] = gs
-            for key in ("percent", "remaining_time", "layer_num", "total_layer_num"):
+            for key in ("remaining_time", "layer_num", "total_layer_num"):
                 if p.get(key) is not None:
                     try:
                         s[key] = int(p[key])
+                    except (TypeError, ValueError):
+                        pass
+            # P2S 等机型进度在 mc_percent；旧报文才用 percent。两者都有时以 mc_percent 为准。
+            for pk in ("mc_percent", "percent"):
+                if p.get(pk) is not None:
+                    try:
+                        s["percent"] = int(float(p[pk]))
+                        break
                     except (TypeError, ValueError):
                         pass
             # 拓竹固件实际用 remain_time / mc_remaining_time 上报剩余分钟，
@@ -1094,8 +1282,10 @@ class PrinterMonitor:
             if p.get("subtask_name"):
                 s["subtask_name"] = p["subtask_name"]
             s["error_code"] = str(p.get("print_error") or p.get("error_code") or "")
+            new_job = apply_job_clock(s, p, prev, now_ts)
+            if gs in ("FINISH", "SUCCEEDED"):
+                s["finished_elapsed_mins"] = elapsed_minutes(s.get("print_start_ts"), now_ts)
             pct = s["percent"] or 0
-            rt = fmt_minutes(s["remaining_time"])
             running_now = gs == "RUNNING" or (not gs and s["gcode_state"] == "RUNNING")
         if running_now:
             self._touch_job_later()
@@ -1116,32 +1306,38 @@ class PrinterMonitor:
             time_bits.append(f"**预计完成**：{finish_at}（北京时间）")
         time_line = ("\n\n" + "\n\n".join(time_bits)) if time_bits else ""
 
+        # 新的一单：从空闲/完成进入准备或打印，或任务身份变了。准备阶段也要重置，
+        # 否则 PREPARE → RUNNING 会沿用上一单的 print_start_ts，完成耗时会跨过空闲时间。
+        if new_job:
+            step = int(n.get("progress_step") or 0)
+            if gs == "RUNNING" and step > 0:
+                self.last_bucket = pct // step
+            else:
+                self.last_bucket = 0
+            try:
+                if prev != "" and get_store().open_job_id(self.pid):
+                    finish_job_archive(self.pid, "cancelled")
+                begin_job_archive(self.pid, incomplete=(prev == "" and gs == "RUNNING"))
+            except Exception:
+                log.warning("%s 建立任务归档失败", name)
+
         # 状态切换事件：只在 gcode_state 真正变化时触发
         if gs and gs != prev:
-            if gs == "RUNNING" and prev in ("", "IDLE", "FINISH", "FAILED", "SUCCEEDED"):
-                with lock:
-                    s["print_start_ts"] = time.time()
-                step = int(n.get("progress_step") or 0)
-                self.last_bucket = pct // step if step > 0 else 0
-                try:
-                    begin_job_archive(self.pid, incomplete=(prev == ""))
-                except Exception:
-                    log.warning("%s 建立任务归档失败", name)
-                if n.get("on_start"):
-                    notify(name, "开始打印", f"**任务**：{task_name()}\n\n**进度**：{pct}%{time_line}",
-                           tag="start", event="start", with_media=True, printer_id=self.pid)
+            if gs == "RUNNING" and prev in _START_FROM_STATES and n.get("on_start"):
+                notify(name, "开始打印", f"**任务**：{task_name()}\n\n**进度**：{pct}%{time_line}",
+                       tag="start", event="start", with_media=True, printer_id=self.pid)
 
-            if gs == "RUNNING" and prev == "PAUSED" and n.get("on_resume"):
+            if gs == "RUNNING" and prev in ("PAUSED", "PAUSE") and n.get("on_resume"):
                 notify(name, "打印已恢复", f"**任务**：{task_name()}{time_line}",
                        tag="resume", event="resume", with_media=True, printer_id=self.pid)
 
             if gs in ("FINISH", "SUCCEEDED"):
                 with lock:
-                    start_ts = s["print_start_ts"]
-                dur = ""
-                if start_ts:
-                    mins = int((time.time() - start_ts) // 60)
-                    dur = f"\n\n**耗时**：{fmt_minutes(mins) or '0分钟'}"
+                    mins = s.get("finished_elapsed_mins")
+                    if mins is None:
+                        mins = elapsed_minutes(s.get("print_start_ts"), now_ts)
+                        s["finished_elapsed_mins"] = mins
+                dur = f"\n\n**耗时**：{format_elapsed(mins)}" if mins is not None else ""
                 try:
                     finish_job_archive(self.pid, "finished")
                 except Exception:
@@ -1159,10 +1355,10 @@ class PrinterMonitor:
                 if n.get("on_failed"):
                     notify(name, "打印失败", f"**任务**：{task_name()}\n\n**错误码**：{err or '未知'}",
                            tag="fail", event="failed", with_media=True, printer_id=self.pid)
-            elif gs == "PAUSED" and prev != "PAUSED" and n.get("on_pause"):
+            elif gs in ("PAUSED", "PAUSE") and prev not in ("PAUSED", "PAUSE") and n.get("on_pause"):
                 notify(name, "打印已暂停", f"**任务**：{task_name()}{time_line}",
                        tag="pause", event="pause", with_media=True, printer_id=self.pid)
-            elif gs == "IDLE" and prev in ("RUNNING", "PAUSED", "PREPARE", "SLICING"):
+            elif gs == "IDLE" and prev in ("RUNNING", "PAUSED", "PAUSE", "PREPARE", "SLICING"):
                 try:
                     finish_job_archive(self.pid, "cancelled")
                 except Exception:
@@ -1175,8 +1371,11 @@ class PrinterMonitor:
                 b = pct // step
                 if b > self.last_bucket:
                     self.last_bucket = b
+                    with lock:
+                        mins = elapsed_minutes(s.get("print_start_ts"), now_ts)
+                    dur = f"\n\n**耗时**：{format_elapsed(mins)}" if mins is not None else ""
                     notify(name, f"打印进度 {b * step}%",
-                           f"**任务**：{task_name()}\n\n**进度**：{pct}%{time_line}",
+                           f"**任务**：{task_name()}\n\n**进度**：{pct}%{dur}{time_line}",
                            tag="print", event="progress", with_media=True, printer_id=self.pid)
 
 
@@ -1708,7 +1907,7 @@ def api_status():
                 "task": s["subtask_name"] or (Path(s["gcode_file"]).name if s["gcode_file"] else ""),
                 "error_code": s["error_code"],
                 "last_msg_ago": int(now - s["last_msg_ts"]) if s["last_msg_ts"] else None,
-                "elapsed_mins": int((now - s["print_start_ts"]) // 60) if s["print_start_ts"] else None,
+                "elapsed_mins": live_elapsed_minutes(s, now),
             })
         enabled_count = sum(1 for p in config["printers"] if p["enabled"])
     online_count = sum(1 for x in out if x["online"])
