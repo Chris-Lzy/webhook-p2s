@@ -453,7 +453,7 @@ class ScheduleTests(unittest.TestCase):
             app.load_config()
             self.assertEqual(app.config["printers"][0]["name"], "旧设备")
             self.assertEqual(app.config["printers"][0]["access_code"], secret)
-            self.assertEqual(app.__version__, "2.2.0")
+            self.assertEqual(app.__version__, "2.2.1")
             self.assertTrue(app.config["filament"]["low_remain_enabled"])
             self.assertIn("low_remain", app.config["notify"]["windows"][0]["events"])
             blob = (app.DATA_DIR / "inventory.db").read_bytes() if (app.DATA_DIR / "inventory.db").exists() else b""
