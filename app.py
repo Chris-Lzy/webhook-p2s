@@ -1118,7 +1118,7 @@ class PrinterMonitor:
 
         # 状态切换事件：只在 gcode_state 真正变化时触发
         if gs and gs != prev:
-            if gs == "RUNNING" and prev in ("", "IDLE", "FINISH", "FAILED", "SUCCEEDED"):
+            if gs == "RUNNING" and prev != "PAUSED":
                 with lock:
                     s["print_start_ts"] = time.time()
                 step = int(n.get("progress_step") or 0)
@@ -1138,9 +1138,10 @@ class PrinterMonitor:
             if gs in ("FINISH", "SUCCEEDED"):
                 with lock:
                     start_ts = s["print_start_ts"]
+                    s["print_start_ts"] = None
                 dur = ""
-                if start_ts:
-                    mins = int((time.time() - start_ts) // 60)
+                if start_ts is not None:
+                    mins = max(0, int((time.time() - start_ts) // 60))
                     dur = f"\n\n**耗时**：{fmt_minutes(mins) or '0分钟'}"
                 try:
                     finish_job_archive(self.pid, "finished")
@@ -1152,6 +1153,7 @@ class PrinterMonitor:
             elif gs == "FAILED":
                 with lock:
                     err = s["error_code"]
+                    s["print_start_ts"] = None
                 try:
                     finish_job_archive(self.pid, "failed")
                 except Exception:
@@ -1163,10 +1165,15 @@ class PrinterMonitor:
                 notify(name, "打印已暂停", f"**任务**：{task_name()}{time_line}",
                        tag="pause", event="pause", with_media=True, printer_id=self.pid)
             elif gs == "IDLE" and prev in ("RUNNING", "PAUSED", "PREPARE", "SLICING"):
+                with lock:
+                    s["print_start_ts"] = None
                 try:
                     finish_job_archive(self.pid, "cancelled")
                 except Exception:
                     log.warning("%s 结束任务归档失败", name)
+            elif gs == "IDLE":
+                with lock:
+                    s["print_start_ts"] = None
 
         # 进度节点推送：独立于状态切换，只要处于打印中就检查（修复状态不变时进度不推送）
         if running_now:
