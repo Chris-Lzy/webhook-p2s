@@ -1121,6 +1121,9 @@ class PrinterMonitor:
             if gs == "RUNNING" and prev != "PAUSED":
                 with lock:
                     s["print_start_ts"] = time.time()
+                    if p.get("percent") is None:
+                        s["percent"] = 0
+                        pct = 0
                 step = int(n.get("progress_step") or 0)
                 self.last_bucket = pct // step if step > 0 else 0
                 try:
@@ -1139,6 +1142,8 @@ class PrinterMonitor:
                 with lock:
                     start_ts = s["print_start_ts"]
                     s["print_start_ts"] = None
+                    s["percent"] = 0
+                    s["remaining_time"] = None
                 dur = ""
                 if start_ts is not None:
                     mins = max(0, int((time.time() - start_ts) // 60))
@@ -1154,6 +1159,8 @@ class PrinterMonitor:
                 with lock:
                     err = s["error_code"]
                     s["print_start_ts"] = None
+                    s["percent"] = 0
+                    s["remaining_time"] = None
                 try:
                     finish_job_archive(self.pid, "failed")
                 except Exception:
@@ -1167,6 +1174,8 @@ class PrinterMonitor:
             elif gs == "IDLE" and prev in ("RUNNING", "PAUSED", "PREPARE", "SLICING"):
                 with lock:
                     s["print_start_ts"] = None
+                    s["percent"] = 0
+                    s["remaining_time"] = None
                 try:
                     finish_job_archive(self.pid, "cancelled")
                 except Exception:
@@ -1174,11 +1183,13 @@ class PrinterMonitor:
             elif gs == "IDLE":
                 with lock:
                     s["print_start_ts"] = None
+                    s["percent"] = 0
+                    s["remaining_time"] = None
 
         # 进度节点推送：独立于状态切换，只要处于打印中就检查（修复状态不变时进度不推送）
         if running_now:
             step = int(n.get("progress_step") or 0)
-            if step > 0:
+            if step > 0 and pct < 100:
                 b = pct // step
                 if b > self.last_bucket:
                     self.last_bucket = b
