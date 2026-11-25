@@ -32,7 +32,7 @@ from store import Store
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("monitor")
 
-__version__ = "2.2.0"
+__version__ = "2.3.0"
 
 # 固定北京时间（UTC+8），不依赖容器/宿主时区设置
 BEIJING_TZ = timezone(timedelta(hours=8))
@@ -102,6 +102,8 @@ def blank_status():
         "total_layer_num": None,
         "nozzle_temper": None,
         "bed_temper": None,
+        "spd_lvl": None,
+        "spd_mag": None,
         "gcode_file": "",
         "subtask_name": "",
         "error_code": "",
@@ -609,6 +611,33 @@ def notify(pname, title, text, tag="print", event=None, with_media=False, printe
     threading.Thread(target=run, daemon=True).start()
 
 
+SPEED_LEVEL_TEXT = {1: "静音", 2: "标准", 3: "运动", 4: "狂暴"}
+SPEED_LEVEL_PCT = {1: 50, 2: 100, 3: 124, 4: 166}
+
+
+def fmt_speed(spd_lvl, spd_mag=None):
+    """格式化打印速度档位与百分比，如 '标准 (100%)'。"""
+    try:
+        lvl = int(spd_lvl) if spd_lvl is not None else None
+    except (TypeError, ValueError):
+        lvl = None
+    try:
+        mag = int(spd_mag) if spd_mag is not None and int(spd_mag) > 0 else None
+    except (TypeError, ValueError):
+        mag = None
+    label = SPEED_LEVEL_TEXT.get(lvl) if lvl is not None else None
+    pct = mag if mag is not None else (SPEED_LEVEL_PCT.get(lvl) if lvl is not None else None)
+    if label and pct is not None:
+        return f"{label} ({pct}%)"
+    if label:
+        return label
+    if pct is not None:
+        return f"{pct}%"
+    if lvl is not None:
+        return f"档位 {lvl}"
+    return ""
+
+
 def fmt_minutes(m):
     try:
         m = int(m)
@@ -1065,7 +1094,7 @@ class PrinterMonitor:
             s["last_msg_ts"] = time.time()
             if gs:
                 s["gcode_state"] = gs
-            for key in ("percent", "remaining_time", "layer_num", "total_layer_num"):
+            for key in ("percent", "remaining_time", "layer_num", "total_layer_num", "spd_lvl", "spd_mag"):
                 if p.get(key) is not None:
                     try:
                         s[key] = int(p[key])
@@ -1109,6 +1138,9 @@ class PrinterMonitor:
         # 剩余分钟 + 预计完成时刻（北京时间）——每个推送都带上
         remain_mins = remaining_minutes(s)
         finish_at = fmt_finish_at(remain_mins)
+        with lock:
+            speed_text = fmt_speed(s["spd_lvl"], s["spd_mag"])
+        speed_line = f"\n\n**速度**：{speed_text}" if speed_text else ""
         time_bits = []
         if remain_mins is not None:
             time_bits.append(f"**剩余时间**：约 {remain_mins} 分钟")
@@ -1131,11 +1163,11 @@ class PrinterMonitor:
                 except Exception:
                     log.warning("%s 建立任务归档失败", name)
                 if n.get("on_start"):
-                    notify(name, "开始打印", f"**任务**：{task_name()}\n\n**进度**：{pct}%{time_line}",
+                    notify(name, "开始打印", f"**任务**：{task_name()}\n\n**进度**：{pct}%{speed_line}{time_line}",
                            tag="start", event="start", with_media=True, printer_id=self.pid)
 
             if gs == "RUNNING" and prev == "PAUSED" and n.get("on_resume"):
-                notify(name, "打印已恢复", f"**任务**：{task_name()}{time_line}",
+                notify(name, "打印已恢复", f"**任务**：{task_name()}{speed_line}{time_line}",
                        tag="resume", event="resume", with_media=True, printer_id=self.pid)
 
             if gs in ("FINISH", "SUCCEEDED"):
@@ -1169,7 +1201,7 @@ class PrinterMonitor:
                     notify(name, "打印失败", f"**任务**：{task_name()}\n\n**错误码**：{err or '未知'}",
                            tag="fail", event="failed", with_media=True, printer_id=self.pid)
             elif gs == "PAUSED" and prev != "PAUSED" and n.get("on_pause"):
-                notify(name, "打印已暂停", f"**任务**：{task_name()}{time_line}",
+                notify(name, "打印已暂停", f"**任务**：{task_name()}{speed_line}{time_line}",
                        tag="pause", event="pause", with_media=True, printer_id=self.pid)
             elif gs == "IDLE" and prev in ("RUNNING", "PAUSED", "PREPARE", "SLICING"):
                 with lock:
@@ -1194,7 +1226,7 @@ class PrinterMonitor:
                 if b > self.last_bucket:
                     self.last_bucket = b
                     notify(name, f"打印进度 {b * step}%",
-                           f"**任务**：{task_name()}\n\n**进度**：{pct}%{time_line}",
+                           f"**任务**：{task_name()}\n\n**进度**：{pct}%{speed_line}{time_line}",
                            tag="print", event="progress", with_media=True, printer_id=self.pid)
 
 
@@ -1723,6 +1755,9 @@ def api_status():
                 "total_layer_num": s["total_layer_num"],
                 "nozzle_temper": s["nozzle_temper"],
                 "bed_temper": s["bed_temper"],
+                "spd_lvl": s["spd_lvl"],
+                "spd_mag": s["spd_mag"],
+                "speed_text": fmt_speed(s["spd_lvl"], s["spd_mag"]),
                 "task": s["subtask_name"] or (Path(s["gcode_file"]).name if s["gcode_file"] else ""),
                 "error_code": s["error_code"],
                 "last_msg_ago": int(now - s["last_msg_ts"]) if s["last_msg_ts"] else None,

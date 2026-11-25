@@ -598,6 +598,7 @@ function statusTip(s){
   if (s.layer_num != null) tip.push(`层 ${s.layer_num}/${s.total_layer_num != null ? s.total_layer_num : '?'}`);
   if (s.nozzle_temper != null) tip.push(`喷嘴 ${s.nozzle_temper}°C`);
   if (s.bed_temper != null) tip.push(`热床 ${s.bed_temper}°C`);
+  if (s.speed_text) tip.push(`速度 ${s.speed_text}`);
   if (s.elapsed_mins) tip.push(`已用 ${fmtMin(s.elapsed_mins)}`);
   if (s.remaining_mins != null) tip.push(`剩余 ${s.remaining_mins} 分钟`);
   else if (s.remaining_time) tip.push(`剩余 ${fmtMin(s.remaining_time)}`);
@@ -612,6 +613,7 @@ function statusDetail(s){
   if (s.layer_num != null) bits.push(`层 ${s.layer_num}/${s.total_layer_num != null ? s.total_layer_num : '?'}`);
   if (s.nozzle_temper != null) bits.push(`喷嘴 ${s.nozzle_temper}°C`);
   if (s.bed_temper != null) bits.push(`热床 ${s.bed_temper}°C`);
+  if (s.speed_text) bits.push(`速度 ${s.speed_text}`);
   const used = fmtMin(s.elapsed_mins);
   if (used) bits.push(`已用 ${used}`);
   return bits.join(' · ');
