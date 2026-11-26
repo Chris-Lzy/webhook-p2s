@@ -1186,9 +1186,23 @@ function gramsText(value){
   if (value == null) return '未知';
   return `${Number(value).toFixed(1)} g`;
 }
-function remainText(value){
-  if (value == null || Number(value) < 0) return '未知';
-  return `${Number(value)}%`;
+function knownNumber(value){
+  if (value == null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+function remainText(spool){
+  if (!spool || typeof spool !== 'object') return '未知';
+  const pct = knownNumber(spool.remain_pct);
+  const direct = knownNumber(spool.remain_g);
+  const nominal = knownNumber(spool.nominal_weight_g);
+  let grams = null;
+  if (direct != null && direct >= 0) grams = direct;
+  else if (pct != null && pct >= 0 && nominal != null && nominal > 0) grams = nominal * pct / 100;
+  const bits = [];
+  if (grams != null) bits.push(`${grams >= 100 ? grams.toFixed(0) : grams.toFixed(1)} g`);
+  if (pct != null && pct >= 0) bits.push(`${pct}%`);
+  return bits.length ? bits.join(' · ') : '未知';
 }
 function safeColor(value){
   const match = String(value || '').replace('#','').match(/^[0-9a-fA-F]{6}/);
@@ -1310,7 +1324,7 @@ function renderSpools(){
       [spool.material, spool.brand].filter(Boolean).join(' · ') || '—',
       tdNode(color),
       spool.nominal_weight_g != null ? `${spool.nominal_weight_g} g` : '—',
-      remainText(spool.remain_pct),
+      remainText(spool),
       tdNode(price),
       spool.tag_uid ? `${spool.tag_uid}` : '无芯片',
       spool.last_slot || spool.bound_slot || '—',
@@ -1337,7 +1351,7 @@ async function showSpoolDetail(id){
   box.append(title);
   const lines = [
     `标签 ${spool.tag_uid || '无'} / UUID ${spool.tray_uuid || '无'}`,
-    `净重 ${spool.nominal_weight_g || '—'} g，剩余 ${remainText(spool.remain_pct)}`,
+    `净重 ${spool.nominal_weight_g || '—'} g，剩余 ${remainText(spool)}`,
     `喷嘴 ${spool.nozzle_temp_min || '—'}–${spool.nozzle_temp_max || '—'} °C，烘干 ${spool.drying_temp || '—'} °C / ${spool.drying_time || '—'} h`,
     spool.notes ? `备注 ${spool.notes}` : ''
   ].filter(Boolean);

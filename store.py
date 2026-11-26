@@ -13,6 +13,7 @@ from filament import (
     aggregate_periods,
     aggregate_spools,
     aggregate_usage_axis,
+    effective_remain_pct,
     low_remain_decision,
     match_exact_filaments,
     normalize_color,
@@ -45,6 +46,7 @@ CREATE TABLE IF NOT EXISTS spools (
     drying_temp REAL,
     drying_time REAL,
     remain_pct REAL,
+    remain_g REAL,
     total_len_mm REAL,
     tray_id_name TEXT NOT NULL DEFAULT '',
     tray_info_idx TEXT NOT NULL DEFAULT '',
@@ -135,6 +137,8 @@ CREATE TABLE IF NOT EXISTS job_baselines (
     material TEXT NOT NULL DEFAULT '',
     color TEXT NOT NULL DEFAULT '',
     remain_pct REAL,
+    remain_g REAL,
+    remain_g_fresh INTEGER NOT NULL DEFAULT 0,
     tray_weight_g REAL,
     tray_info_idx TEXT NOT NULL DEFAULT '',
     occupied INTEGER NOT NULL DEFAULT 0,
@@ -180,7 +184,15 @@ class Store:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.executescript(SCHEMA)
+        self._ensure_column("spools", "remain_g", "REAL")
+        self._ensure_column("job_baselines", "remain_g", "REAL")
+        self._ensure_column("job_baselines", "remain_g_fresh", "INTEGER NOT NULL DEFAULT 0")
         self.conn.commit()
+
+    def _ensure_column(self, table, column, ddl):
+        cols = {row[1] for row in self.conn.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
     def close(self):
         with self._lock:
@@ -609,18 +621,18 @@ class Store:
         cur = self.conn.execute(
             """INSERT INTO spools (
                 source, tag_uid, tray_uuid, brand, material, color, diameter, nominal_weight_g,
-                currency, nozzle_temp_min, nozzle_temp_max, drying_temp, drying_time, remain_pct,
+                currency, nozzle_temp_min, nozzle_temp_max, drying_temp, drying_time, remain_pct, remain_g,
                 total_len_mm, tray_id_name, tray_info_idx, sub_brands,
                 last_printer_id, last_printer_name, last_slot, last_seen_ts, created_at, updated_at
             ) VALUES (
-                'rfid', ?, ?, ?, ?, ?, ?, ?, 'CNY', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                'rfid', ?, ?, ?, ?, ?, ?, ?, 'CNY', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )""",
             (
                 slot.get("tag_uid") or "", slot.get("tray_uuid") or "",
                 slot.get("sub_brands") or "", slot.get("material") or "", slot.get("color") or "",
                 slot.get("diameter"), slot.get("nominal_weight_g"),
                 slot.get("nozzle_temp_min"), slot.get("nozzle_temp_max"),
-                slot.get("drying_temp"), slot.get("drying_time"), slot.get("remain_pct"),
+                slot.get("drying_temp"), slot.get("drying_time"), slot.get("remain_pct"), slot.get("remain_g"),
                 slot.get("total_len_mm"), slot.get("tray_id_name") or "", slot.get("tray_info_idx") or "",
                 slot.get("sub_brands") or "", printer_id, printer_name, slot["slot"], now, now, now,
             ),
@@ -633,9 +645,11 @@ class Store:
         brand = found["brand"] or slot.get("sub_brands") or ""
         old_remain = found["remain_pct"]
         new_remain = slot.get("remain_pct")
+        new_grams = slot.get("remain_g")
+        old_grams = found["remain_g"] if "remain_g" in found.keys() else None
         self.conn.execute(
             """UPDATE spools SET brand=?, material=?, color=?, diameter=?, nominal_weight_g=?,
-               nozzle_temp_min=?, nozzle_temp_max=?, drying_temp=?, drying_time=?, remain_pct=?,
+               nozzle_temp_min=?, nozzle_temp_max=?, drying_temp=?, drying_time=?, remain_pct=?, remain_g=?,
                total_len_mm=?, tray_id_name=?, tray_info_idx=?, sub_brands=?,
                last_printer_id=?, last_printer_name=?, last_slot=?, last_seen_ts=?, updated_at=?
                WHERE id=?""",
@@ -646,6 +660,7 @@ class Store:
                 slot.get("nozzle_temp_min"), slot.get("nozzle_temp_max"),
                 slot.get("drying_temp"), slot.get("drying_time"),
                 new_remain if new_remain is not None else old_remain,
+                new_grams if new_grams is not None else old_grams,
                 slot.get("total_len_mm") if slot.get("total_len_mm") is not None else found["total_len_mm"],
                 slot.get("tray_id_name") or found["tray_id_name"],
                 slot.get("tray_info_idx") or found["tray_info_idx"],
@@ -660,7 +675,7 @@ class Store:
         spool = self._spool(spool_id)
         if not spool:
             return None
-        action, flagged = low_remain_decision(slot.get("remain_pct"), threshold, spool["low_remain_alerted"])
+        action, flagged = low_remain_decision(effective_remain_pct(slot), threshold, spool["low_remain_alerted"])
         if action == "skip":
             return None
         if int(bool(flagged)) != int(spool["low_remain_alerted"]):
@@ -670,12 +685,13 @@ class Store:
             )
         if action != "alert":
             return None
-        self._event(spool_id, "low_remain", printer_id, printer_name, slot["slot"], remain_pct=slot.get("remain_pct"))
+        shown = effective_remain_pct(slot)
+        self._event(spool_id, "low_remain", printer_id, printer_name, slot["slot"], remain_pct=shown)
         return {
             "spool_id": spool_id,
             "material": spool["material"] or slot.get("material") or "",
             "color": spool["color"] or slot.get("color") or "",
-            "remain_pct": slot.get("remain_pct"),
+            "remain_pct": shown,
             "slot": slot["slot"],
             "tag_uid": spool["tag_uid"],
             "tray_uuid": spool["tray_uuid"],
@@ -751,13 +767,14 @@ class Store:
                 continue
             self.conn.execute(
                 """INSERT OR REPLACE INTO job_baselines (
-                    job_id, slot, spool_id, tag_uid, tray_uuid, material, color, remain_pct,
-                    tray_weight_g, tray_info_idx, occupied
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
+                    job_id, slot, spool_id, tag_uid, tray_uuid, material, color, remain_pct, remain_g,
+                    remain_g_fresh, tray_weight_g, tray_info_idx, occupied
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
                 (
                     job_id, slot["slot"], slot.get("spool_id"), slot.get("tag_uid") or "",
                     slot.get("tray_uuid") or "", slot.get("material") or "", slot.get("color") or "",
-                    slot.get("remain_pct"), slot.get("nominal_weight_g"), slot.get("tray_info_idx") or "",
+                    slot.get("remain_pct"), slot.get("remain_g"), 1 if slot.get("remain_g_fresh") else 0,
+                    slot.get("nominal_weight_g"), slot.get("tray_info_idx") or "",
                 ),
             )
 
@@ -786,6 +803,8 @@ class Store:
                 "material": row["material"],
                 "color": row["color"],
                 "remain_pct": row["remain_pct"],
+                "remain_g": row["remain_g"] if "remain_g" in row.keys() else None,
+                "remain_g_fresh": bool(row["remain_g_fresh"]) if "remain_g_fresh" in row.keys() else False,
                 "nominal_weight_g": row["tray_weight_g"],
                 "tray_info_idx": row["tray_info_idx"],
             })

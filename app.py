@@ -32,7 +32,7 @@ from store import Store
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("monitor")
 
-__version__ = "2.3.0"
+__version__ = "2.3.1"
 
 # 固定北京时间（UTC+8），不依赖容器/宿主时区设置
 BEIJING_TZ = timezone(timedelta(hours=8))

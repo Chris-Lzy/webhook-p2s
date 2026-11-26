@@ -78,11 +78,34 @@ def _text(raw, key):
     return str(raw.get(key) or "").strip()
 
 
+def parse_remain_g(raw):
+    """固件直接上报的剩余克数。缺字段是 None；-1 表示没有测量，不能当成 0 克。"""
+    if not isinstance(raw, dict) or "remain_g" not in raw:
+        return None
+    return parse_float(raw.get("remain_g"))
+
+
+def nominal_weight_g(raw):
+    """tray_weight 是满卷标称净重（克）。缺字段或 0 都是未知，不是 0 克的一卷料。"""
+    if not isinstance(raw, dict) or "tray_weight" not in raw:
+        return None
+    weight = parse_float(raw.get("tray_weight"))
+    if weight is None or weight <= 0:
+        return None
+    return weight
+
+
 def normalize_slot(raw, slot, ams_id=""):
     """把一槽 MQTT 字段收成稳定结构。缺字段保持空，不补假数据。"""
     raw = raw if isinstance(raw, dict) else {}
-    remain = parse_remain(raw.get("remain"))
-    return {
+    remain = parse_remain(raw.get("remain")) if "remain" in raw else None
+    remain_grams = parse_remain_g(raw)
+    weight = nominal_weight_g(raw)
+    # 外挂料盘 / 无芯片料经常同时报 tray_weight=0 和 remain=0，意思是没测到，不是用完。
+    if weight is None and "tray_weight" in raw and (remain_grams is None or remain_grams < 0):
+        if remain is not None and remain <= 0:
+            remain = None
+    parsed = {
         "slot": slot,
         "ams_id": str(ams_id or ""),
         "tray_id": _text(raw, "id"),
@@ -92,20 +115,24 @@ def normalize_slot(raw, slot, ams_id=""):
         "tray_uuid": _text(raw, "tray_uuid"),
         "material": _text(raw, "tray_type"),
         "color": normalize_color(raw.get("tray_color")),
-        "diameter": parse_float(raw.get("tray_diameter")),
-        "nominal_weight_g": parse_float(raw.get("tray_weight")),
+        "diameter": parse_float(raw.get("tray_diameter")) if "tray_diameter" in raw else None,
+        "nominal_weight_g": weight,
         "remain_pct": remain,
+        "remain_g": remain_grams,
+        "remain_g_fresh": "remain_g" in raw,
         "sub_brands": _text(raw, "tray_sub_brands"),
         "tray_id_name": _text(raw, "tray_id_name"),
         "tray_info_idx": _text(raw, "tray_info_idx"),
-        "nozzle_temp_min": parse_float(raw.get("nozzle_temp_min")),
-        "nozzle_temp_max": parse_float(raw.get("nozzle_temp_max")),
-        "drying_temp": parse_float(raw.get("drying_temp")),
-        "drying_time": parse_float(raw.get("drying_time")),
-        "total_len_mm": parse_float(raw.get("total_len")),
+        "nozzle_temp_min": parse_float(raw.get("nozzle_temp_min")) if "nozzle_temp_min" in raw else None,
+        "nozzle_temp_max": parse_float(raw.get("nozzle_temp_max")) if "nozzle_temp_max" in raw else None,
+        "drying_temp": parse_float(raw.get("drying_temp")) if "drying_temp" in raw else None,
+        "drying_time": parse_float(raw.get("drying_time")) if "drying_time" in raw else None,
+        "total_len_mm": parse_float(raw.get("total_len")) if "total_len" in raw else None,
         "cols": _text(raw, "cols"),
         "ctype": _text(raw, "ctype"),
+        "_reported": set(raw.keys()),
     }
+    return parsed
 
 
 def _tray_list(unit):
@@ -135,14 +162,32 @@ def parse_slots(print_obj):
             if not tray_id:
                 continue
             slots.append(normalize_slot(tray, f"ams:{ams_id}:tray:{tray_id}", ams_id))
-    vt = None
-    if isinstance(ams, dict) and isinstance(ams.get("vt_tray"), dict):
-        vt = ams.get("vt_tray")
-    if isinstance(print_obj.get("vt_tray"), dict):
-        vt = print_obj.get("vt_tray")
-    if isinstance(vt, dict):
-        slots.append(normalize_slot(vt, "vt_tray", "vt"))
+    virtual = _virtual_trays(print_obj, ams if isinstance(ams, dict) else None)
+    for vt in virtual:
+        slots.append(normalize_slot(vt, _virtual_slot_name(vt, len(virtual)), "vt"))
     return slots
+
+
+def _virtual_trays(print_obj, ams):
+    """外挂料盘。新固件（P2S 缓冲器 / 多外挂）用 vir_slot 列表，旧固件用单个 vt_tray。"""
+    print_obj = print_obj if isinstance(print_obj, dict) else {}
+    ams = ams if isinstance(ams, dict) else {}
+    for source in (print_obj, ams):
+        raw = source.get("vir_slot")
+        if isinstance(raw, list) and raw:
+            return [item for item in raw if isinstance(item, dict)]
+    for source in (print_obj, ams):
+        vt = source.get("vt_tray")
+        if isinstance(vt, dict):
+            return [vt]
+    return []
+
+
+def _virtual_slot_name(tray, count):
+    vid = str(tray.get("id") if isinstance(tray, dict) and tray.get("id") is not None else "").strip()
+    if count <= 1 or vid in {"", "254"}:
+        return "vt_tray"
+    return f"vir:{vid}"
 
 
 def active_slot_key(print_obj, slots):
@@ -159,7 +204,15 @@ def active_slot_key(print_obj, slots):
     if not text:
         return None
     if text in EXTERNAL_TRAY_IDS:
-        return "vt_tray" if any(item["slot"] == "vt_tray" for item in slots) else None
+        exact = [
+            item for item in slots
+            if item.get("tray_id") == text and str(item.get("slot") or "").startswith(("vt", "vir"))
+        ]
+        if len(exact) == 1:
+            return exact[0]["slot"]
+        if any(item["slot"] == "vt_tray" for item in slots):
+            return "vt_tray"
+        return None
     ams_id = str(ams.get("ams_id") or ams.get("tray_now_ams_id") or "").strip()
     matches = [item for item in slots if item.get("tray_id") == text]
     if ams_id:
@@ -185,6 +238,72 @@ def detect_load_change(prev, curr):
     return None
 
 
+# 增量上报没带上的字段，沿用上一帧。键是归一化字段，值是 MQTT 原字段名。
+_PARTIAL_FIELDS = {
+    "state": "state",
+    "tag_uid": "tag_uid",
+    "tray_uuid": "tray_uuid",
+    "material": "tray_type",
+    "color": "tray_color",
+    "diameter": "tray_diameter",
+    "nominal_weight_g": "tray_weight",
+    "remain_pct": "remain",
+    "remain_g": "remain_g",
+    "sub_brands": "tray_sub_brands",
+    "tray_id_name": "tray_id_name",
+    "tray_info_idx": "tray_info_idx",
+    "nozzle_temp_min": "nozzle_temp_min",
+    "nozzle_temp_max": "nozzle_temp_max",
+    "drying_temp": "drying_temp",
+    "drying_time": "drying_time",
+    "total_len_mm": "total_len",
+    "cols": "cols",
+    "ctype": "ctype",
+}
+
+
+def _explicit_empty(slot, reported):
+    """空槽：P2S + AMS 2 Pro 常见 state=9；更新的固件也可能只剩一个 id。"""
+    state = str(slot.get("state") or "")
+    if state in EMPTY_STATES:
+        return True
+    if reported <= {"id"}:
+        return True
+    return False
+
+
+def _identity_replaced(prev, slot, reported):
+    if "tag_uid" not in reported and "tray_uuid" not in reported:
+        return False
+    old = (prev.get("tag_uid") or "", prev.get("tray_uuid") or "")
+    new_tag = slot.get("tag_uid") if "tag_uid" in reported else (prev.get("tag_uid") or "")
+    new_uuid = slot.get("tray_uuid") if "tray_uuid" in reported else (prev.get("tray_uuid") or "")
+    new = (new_tag or "", new_uuid or "")
+    return old != new and any(old) and any(new)
+
+
+def _merge_partial_slot(prev, slot):
+    """拓竹 MQTT 经常只推变化的字段。整槽替换会把 tray_weight / remain_g 冲掉。"""
+    reported = slot.pop("_reported", None) or set()
+    if not prev or _explicit_empty(slot, reported) or _identity_replaced(prev, slot, reported):
+        return slot
+    merged = dict(slot)
+    for field, raw_key in _PARTIAL_FIELDS.items():
+        if raw_key in reported:
+            continue
+        previous = prev.get(field)
+        if previous not in (None, ""):
+            merged[field] = previous
+    if "remain_g" not in reported:
+        # 这一帧没重新测量。沿用的克数不能拿来和开头相减，否则会把真实用量记成 0。
+        merged["remain_g_fresh"] = False
+    if "state" not in reported:
+        merged["occupied"] = prev.get("occupied")
+    elif merged.get("state") not in EMPTY_STATES and prev.get("occupied") and not merged.get("occupied"):
+        merged["occupied"] = True
+    return merged
+
+
 class SlotTracker:
     """进程内槽位基线。服务没看到过的槽位变化不记装填时间。"""
 
@@ -198,6 +317,7 @@ class SlotTracker:
         for slot in slots:
             key = slot["slot"]
             prev = self.prev.get(key)
+            slot = _merge_partial_slot(prev, slot)
             reason = detect_load_change(prev, slot)
             if reason:
                 changes.append({"reason": reason, "prev": prev, "curr": slot})
@@ -211,6 +331,15 @@ class SlotTracker:
         if active_slot is not None:
             self.active_slot = active_slot
         return {"changes": changes, "dirty": dirty, "slots": list(self.prev.values())}
+
+
+def _grams_key(value):
+    number = parse_float(value)
+    if number is None:
+        return None
+    if number < 0:
+        return -1
+    return round(number, 1)
 
 
 def _slot_sig(slot):
@@ -228,6 +357,7 @@ def _slot_sig(slot):
         slot.get("material") or "",
         slot.get("color") or "",
         remain_key,
+        _grams_key(slot.get("remain_g")),
         slot.get("nominal_weight_g"),
         slot.get("tray_info_idx") or "",
     )
@@ -254,16 +384,54 @@ def estimate_grams(tray_weight_g, remain_before, remain_after):
     return weight * delta / 100.0, "estimated"
 
 
+def estimate_grams_from_remain_g(before_g, after_g):
+    """用固件上报的剩余克数之差。两端都要是 >= 0 的实测值。"""
+    before = parse_float(before_g)
+    after = parse_float(after_g)
+    if before is None or after is None or before < 0 or after < 0:
+        return None, "unknown"
+    delta = before - after
+    if delta < 0:
+        return None, "unknown"
+    return delta, "estimated"
+
+
+def usage_grams(before, after):
+    """优先用 remain_g。没有克数读数时，才退回标称重量 × 余量百分比。"""
+    before = before if isinstance(before, dict) else {}
+    after = after if isinstance(after, dict) else {}
+    if before.get("remain_g_fresh") and after.get("remain_g_fresh"):
+        grams, source = estimate_grams_from_remain_g(before.get("remain_g"), after.get("remain_g"))
+        if source == "estimated":
+            return grams, source
+    weight = before.get("nominal_weight_g")
+    if weight is None:
+        weight = after.get("nominal_weight_g")
+    return estimate_grams(weight, before.get("remain_pct"), after.get("remain_pct"))
+
+
+def effective_remain_pct(slot):
+    """低余量判断用的百分比。百分比未知时，用剩余克数和标称重量换算。"""
+    if not isinstance(slot, dict):
+        return None
+    remain = parse_remain(slot.get("remain_pct"))
+    if remain_known(remain):
+        return remain
+    grams = parse_float(slot.get("remain_g"))
+    nominal = parse_float(slot.get("nominal_weight_g"))
+    if grams is not None and grams >= 0 and nominal is not None and nominal > 0:
+        return grams / nominal * 100.0
+    return remain
+
+
 def select_estimated_usage(baselines, after_slots, active_slot=None):
     """只给真正可能用到的槽记账。旁路槽 remain=-1 不把整单成本打成未知。"""
     after = {item["slot"]: item for item in after_slots}
     occupied = [item for item in baselines if item.get("occupied")]
     chosen = set()
     for item in occupied:
-        before = item.get("remain_pct")
         after_item = after.get(item["slot"]) or {}
-        after_remain = after_item.get("remain_pct", before)
-        grams, _source = estimate_grams(item.get("nominal_weight_g"), before, after_remain)
+        grams, _source = usage_grams(item, after_item)
         if grams is not None and grams > 0:
             chosen.add(item["slot"])
     if active_slot and any(item["slot"] == active_slot for item in baselines):
@@ -278,7 +446,7 @@ def select_estimated_usage(baselines, after_slots, active_slot=None):
         weight = item.get("nominal_weight_g")
         if weight is None:
             weight = after_item.get("nominal_weight_g")
-        grams, source = estimate_grams(weight, item.get("remain_pct"), after_item.get("remain_pct"))
+        grams, source = usage_grams(item, after_item)
         rows.append({
             "slot": item["slot"],
             "spool_id": item.get("spool_id"),
@@ -583,7 +751,11 @@ def aggregate_spools(spools, jobs):
         used = round(sum(bucket["grams"]), 4) if bucket["grams"] else None
         nominal = parse_float(spool.get("nominal_weight_g"))
         remain = parse_remain(spool.get("remain_pct"))
-        if remain_known(remain) and nominal is not None:
+        remain_g = parse_float(spool.get("remain_g"))
+        if remain_g is not None and remain_g >= 0:
+            remaining = round(remain_g, 4)
+            remaining_source = "printer"
+        elif remain_known(remain) and nominal is not None and nominal > 0:
             remaining = round(nominal * float(remain) / 100.0, 4)
             remaining_source = "printer"
         elif nominal is not None and used is not None:
