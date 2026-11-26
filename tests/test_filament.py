@@ -162,6 +162,68 @@ class LoadDetectionTests(unittest.TestCase):
         self.assertFalse(by_slot["ams:0:tray:1"]["occupied"])
         self.assertEqual(by_slot["vt_tray"]["slot"], "vt_tray")
 
+    def test_partial_report_keeps_weight_and_remain_g_is_preferred(self):
+        tracker = SlotTracker()
+        full = normalize_slot(loaded_tray(remain=86, remain_g=867), "ams:0:tray:0", "0")
+        tracker.feed([full])
+        partial = normalize_slot({"id": "0", "state": 27}, "ams:0:tray:0", "0")
+        fed = tracker.feed([partial])
+        live = list(tracker.prev.values())[0]
+        self.assertEqual(fed["dirty"], [])
+        self.assertEqual(live["nominal_weight_g"], 1000)
+        self.assertEqual(live["remain_pct"], 86)
+        self.assertEqual(live["remain_g"], 867)
+        self.assertFalse(live["remain_g_fresh"])
+        self.assertEqual(live["material"], "PETG")
+        self.assertTrue(live["occupied"])
+        self.assertEqual(live["state"], "27")
+
+        cleared = normalize_slot({"id": "0", "state": 9}, "ams:0:tray:0", "0")
+        tracker.feed([cleared])
+        empty = list(tracker.prev.values())[0]
+        self.assertFalse(empty["occupied"])
+        self.assertIsNone(empty["nominal_weight_g"])
+
+    def test_zero_tray_weight_is_unknown_and_vir_slot_is_read(self):
+        external = normalize_slot(
+            {"id": "254", "state": 11, "tray_type": "PLA", "tray_weight": "0", "remain": 0},
+            "vt_tray", "vt",
+        )
+        self.assertIsNone(external["nominal_weight_g"])
+        self.assertIsNone(external["remain_pct"])
+        self.assertTrue(external["occupied"])
+
+        slots = parse_slots({
+            "ams": {
+                "ams": [{"id": "0", "tray": [loaded_tray(remain=40, remain_g=410)]}],
+                "vt_tray": {"id": "254", "state": 9},
+                "vir_slot": [{
+                    "id": "254",
+                    "state": 11,
+                    "tray_type": "PETG",
+                    "tray_color": "D6001CFF",
+                    "tray_weight": "1000",
+                    "remain": 40,
+                    "remain_g": 410,
+                    "tag_uid": "TAGPETG",
+                    "tray_uuid": "UUIDPETG",
+                }],
+            }
+        })
+        by_slot = {item["slot"]: item for item in slots}
+        self.assertEqual(by_slot["vt_tray"]["remain_g"], 410)
+        self.assertEqual(by_slot["vt_tray"]["nominal_weight_g"], 1000)
+        self.assertTrue(by_slot["vt_tray"]["occupied"])
+        self.assertNotEqual(by_slot["vt_tray"]["state"], "9")
+        report = aggregate_spools([{
+            "id": 1, "source": "rfid", "tag_uid": "TAGPETG", "tray_uuid": "UUIDPETG",
+            "brand": "", "material": "PETG", "color": "D6001CFF",
+            "nominal_weight_g": 1000, "remain_pct": 40, "remain_g": 410,
+            "unit_price_per_kg": None, "currency": "CNY",
+        }], [])
+        self.assertEqual(report[0]["remaining_grams"], 410)
+        self.assertEqual(report[0]["remaining_source"], "printer")
+
 
 class ReportTests(unittest.TestCase):
     def test_model_and_spool_trace_each_other(self):
@@ -313,6 +375,22 @@ class FileSourceTests(unittest.TestCase):
         self.assertEqual(rows[0]["used_g"], 10.5)
         self.assertAlmostEqual(rows[0]["used_m"], 3.5)
 
+    def test_bambu_studio_total_filament_weight(self):
+        # Bambu Studio 实际写出的是这一组，旧的 "filament used [g] =" 被注释掉了。
+        # 长度是毫米；体积行标成 cm^3 但数值是 mm^3，不能拿来换算克数。
+        blob = (
+            b"; HEADER_BLOCK_START\n"
+            b"; total filament length [mm] : 10618.13,0.00\n"
+            b"; total filament volume [cm^3] : 25539.60,0.00\n"
+            b"; total filament weight [g] : 32.18,0.00\n"
+        )
+        rows = parse_gcode_header(blob)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["used_g"], 32.18)
+        self.assertAlmostEqual(rows[0]["used_m"], 10.61813)
+        parsed = parse_slice_bytes(blob, "1")
+        self.assertEqual(parsed.filaments[0]["used_g"], 32.18)
+
     def test_camera_failure_is_not_fatal(self):
         with tempfile.TemporaryDirectory() as tmp:
             dest = Path(tmp) / "still.jpg"
@@ -392,6 +470,29 @@ class StoreRoundTripTests(unittest.TestCase):
         traced = self.store.trace(task_name="挂钩", spool_id=live["spool_id"])
         self.assertEqual(traced["model"]["spools"][0]["spool_id"], live["spool_id"])
         self.assertEqual(traced["spool"]["models"][0]["task_name"], "挂钩")
+
+    def test_remain_g_delta_is_used_when_percent_is_unknown(self):
+        tracker = SlotTracker()
+        start = normalize_slot(loaded_tray(remain=-1, remain_g=800), "ams:0:tray:0", "0")
+        fed = tracker.feed([start])
+        self.store.apply_observation("p1", "P2S_1", fed["dirty"], fed["changes"], 10, True)
+        live = list(tracker.prev.values())[0]
+        self.assertEqual(self.store.get_spool(live["spool_id"])["remain_g"], 800)
+        self.store.open_job("p1", "P2S_1", "克数", "/data/Metadata/plate_1.gcode", [live], live["slot"], 1, 10, 1)
+        end = normalize_slot(loaded_tray(remain=-1, remain_g=760), "ams:0:tray:0", "0")
+        tracker.feed([end])
+        after = list(tracker.prev.values())[0]
+        job = self.store.close_job("p1", "finished", [after], live["slot"], None, None)
+        self.assertEqual(job["usages"][0]["grams"], 40)
+        self.assertEqual(job["usages"][0]["source"], "estimated")
+
+    def test_remain_g_alerts_when_percent_is_unknown(self):
+        tracker = SlotTracker()
+        slot = normalize_slot(loaded_tray(remain=-1, remain_g=50), "ams:0:tray:0", "0")
+        fed = tracker.feed([slot])
+        result = self.store.apply_observation("p1", "P2S_1", fed["dirty"], fed["changes"], 10, True)
+        self.assertEqual(len(result["alerts"]), 1)
+        self.assertEqual(result["alerts"][0]["remain_pct"], 5)
 
     def test_remain_minus_one_is_unknown_and_does_not_alert(self):
         tracker = SlotTracker()

@@ -19,8 +19,17 @@ MAX_DOWNLOAD = 40 * 1024 * 1024
 GCODE_HEAD = 64 * 1024
 
 _PLATE = re.compile(r"plate_(\d+)", re.IGNORECASE)
-_USED_G = re.compile(r"filament used \[g\]\s*[:=]\s*([0-9eE+.,\s-]+)", re.IGNORECASE)
-_USED_MM = re.compile(r"filament used \[mm\]\s*[:=]\s*([0-9eE+.,\s-]+)", re.IGNORECASE)
+# Bambu Studio 把旧的 `; filament used [g] =` 注释掉了，实际写出的是
+# `; total filament weight [g] : 32.18,4.27` 和 `; total filament length [mm] : ...`。
+# 长度单位是毫米。两条都认，避免只匹配到 Prusa 风格的那一行。
+_USED_G = re.compile(
+    r"(?:total\s+filament\s+weight|filament\s+used)\s*\[g\]\s*[:=]\s*([0-9eE+.,\s-]+)",
+    re.IGNORECASE,
+)
+_USED_MM = re.compile(
+    r"(?:total\s+filament\s+length|filament\s+used)\s*\[mm\]\s*[:=]\s*([0-9eE+.,\s-]+)",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -208,8 +217,9 @@ def parse_slice_bytes(blob, plate=""):
         return FileFetch()
     if blob[:2] == b"PK":
         return _parse_3mf(blob, plate)
-    if blob[:1] == b";" or b"filament used" in blob[:GCODE_HEAD].lower():
-        filaments = parse_gcode_header(blob[:GCODE_HEAD])
+    head = blob[:GCODE_HEAD]
+    if head[:1] == b";" or b"filament" in head.lower():
+        filaments = parse_gcode_header(head)
         return FileFetch(ok=bool(filaments), reason="exact" if filaments else "no_metadata", filaments=filaments)
     return FileFetch(reason="no_metadata")
 
@@ -365,7 +375,7 @@ def parse_gcode_header(blob):
         text = blob.decode("utf-8", "ignore")
     else:
         text = str(blob or "")
-    head = text[:8000]
+    head = text[:GCODE_HEAD]
     grams = []
     meters = []
     match_g = _USED_G.search(head)
