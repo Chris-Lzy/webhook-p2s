@@ -351,6 +351,32 @@
       <input type="text" id="f-count" value="400">
     </div>
 
+    <!-- 拓竹云端 -->
+    <div class="sec">
+      <h2>拓竹云端（Bambu Cloud）</h2>
+      <div class="sub">P2S 固件常限制从打印机 FTPS 读取 3MF 切片文件，启用拓竹云端后可直接读取与 Bambu Studio / Handy 一致的精确克数、耗材明细和封面图。仅保存登录令牌（有效期约 3 个月），不保存账号密码。</div>
+      <div class="checks">
+        <label class="span2"><input type="checkbox" id="cl-en"> 启用拓竹云端获取重量</label>
+      </div>
+      <label>云端区域</label>
+      <select id="cl-region">
+        <option value="cn">中国区（api.bambulab.cn）</option>
+        <option value="global">国际区（api.bambulab.com）</option>
+      </select>
+      <label>登录令牌（留空则保留已保存的令牌）</label>
+      <input type="password" id="cl-token" placeholder="粘贴 token，或下方用账号密码登录自动获取">
+      <div class="sub" id="cl-status" style="margin-top:4px">未配置令牌</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <input type="text" id="cl-acc" placeholder="拓竹账号（邮箱）" style="flex:1;min-width:160px">
+        <input type="password" id="cl-pwd" placeholder="密码" style="flex:1;min-width:130px">
+        <input type="text" id="cl-code" placeholder="邮箱验证码（如需要）" style="width:150px">
+      </div>
+      <div class="actions" style="margin-top:8px">
+        <button type="button" id="b-cl-login">账号登录获取令牌</button>
+        <button type="button" id="b-cl-test">测试云端连接</button>
+      </div>
+    </div>
+
     <!-- 摄像头画面 -->
     <div class="sec">
       <h2>摄像头画面</h2>
@@ -879,7 +905,8 @@ $('#b-save').onclick = async () => {
       clip: $('#c-clip').checked,
       clip_seconds: isNaN(clipSec) ? 5 : clipSec
     },
-    filament: collectFilament()
+    filament: collectFilament(),
+    cloud: collectCloud()
   };
 
   const res = await jpost('/api/config', payload);
@@ -1059,7 +1086,49 @@ async function loadConfig(){
   $('#f-labor').value = fil.labor_per_hour != null ? fil.labor_per_hour : '';
   $('#f-age').value = fil.image_max_age_days != null ? fil.image_max_age_days : 90;
   $('#f-count').value = fil.image_max_count != null ? fil.image_max_count : 400;
+
+  const cl = cfg.cloud || {};
+  $('#cl-en').checked = !!cl.enabled;
+  $('#cl-region').value = cl.region || 'cn';
+  $('#cl-token').value = '';
+  const st = cl.token_set
+    ? (cl.token_expiry ? `已配置令牌（有效期至 ${new Date(cl.token_expiry * 1000).toLocaleDateString()}）` : '已配置令牌')
+    : '未配置令牌';
+  $('#cl-status').textContent = st;
 }
+
+function collectCloud(){
+  const out = {
+    enabled: $('#cl-en').checked,
+    region: $('#cl-region').value || 'cn'
+  };
+  const tok = $('#cl-token').value.trim();
+  if (tok) out.token = tok;
+  return out;
+}
+
+$('#b-cl-login').onclick = async () => {
+  const res = await jpost('/api/cloud/login', {
+    region: $('#cl-region').value || 'cn',
+    account: $('#cl-acc').value.trim(),
+    password: $('#cl-pwd').value,
+    code: $('#cl-code').value.trim()
+  });
+  toast(res.msg || (res.ok ? '登录成功' : '登录失败'), !!res.ok);
+  if (res.ok && !res.need_code) {
+    $('#cl-pwd').value = '';
+    $('#cl-code').value = '';
+    await loadConfig();
+  }
+};
+
+$('#b-cl-test').onclick = async () => {
+  const res = await jpost('/api/cloud/test', {
+    region: $('#cl-region').value || 'cn',
+    token: $('#cl-token').value.trim()
+  });
+  toast(res.msg || (res.ok ? '连接成功' : '连接失败'), !!res.ok);
+};
 
 function collectFilament(){
   const power = $('#f-power').value.trim();

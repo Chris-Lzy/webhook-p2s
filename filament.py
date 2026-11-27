@@ -530,6 +530,35 @@ def _time_cost(duration_sec, rate_per_hour):
     return rate * duration / 3600.0
 
 
+_DENSITY_BY_MATERIAL = {
+    "PLA": 1.24,
+    "PETG": 1.27,
+    "ABS": 1.04,
+    "ASA": 1.07,
+    "TPU": 1.21,
+    "PA": 1.14,
+    "PA-CF": 1.20,
+    "PC": 1.20,
+    "PET": 1.38,
+    "PVA": 1.23,
+}
+_FILAMENT_AREA_MM2 = 2.405281875  # pi * (1.75 / 2)^2
+
+
+def estimate_grams_from_meters(meters, material=""):
+    """用 1.75mm 线材长度（米）和材质密度估算克数，仅在缺少克重时兜底。"""
+    m = parse_float(meters)
+    if m is None or m <= 0:
+        return None
+    mat = str(material or "").strip().upper()
+    density = 1.24
+    for key, val in _DENSITY_BY_MATERIAL.items():
+        if key in mat:
+            density = val
+            break
+    return round(m * _FILAMENT_AREA_MM2 * density, 4)
+
+
 def match_exact_filaments(filaments, slots):
     """把切片文件里的用料行对上槽位。对不上也保留克数，只是没有耗材身份。"""
     pool = [dict(item) for item in slots if item.get("occupied")]
@@ -543,13 +572,20 @@ def match_exact_filaments(filaments, slots):
         match = _match_slot(filament, pool, used)
         if match is not None:
             used.add(match["slot"])
-        source = "exact" if grams is not None else "unknown"
+        material = (match or {}).get("material") or str(filament.get("material") or "")
+        if grams is not None:
+            source = "exact"
+        elif meters is not None and meters > 0:
+            grams = estimate_grams_from_meters(meters, material)
+            source = "estimated" if grams is not None else "unknown"
+        else:
+            source = "unknown"
         rows.append({
             "slot": match["slot"] if match else "",
             "spool_id": match.get("spool_id") if match else None,
             "tag_uid": (match or {}).get("tag_uid") or "",
             "tray_uuid": (match or {}).get("tray_uuid") or "",
-            "material": (match or {}).get("material") or str(filament.get("material") or ""),
+            "material": material,
             "color": (match or {}).get("color") or normalize_color(filament.get("color")),
             "grams": grams,
             "meters": meters,
@@ -934,3 +970,54 @@ def trace_spool(spool_id, jobs):
         })
     models.sort(key=lambda item: item["task_name"])
     return {"spool_id": spool_id, "models": models}
+
+
+def job_total_grams(job):
+    """汇总单次打印任务的总克数；没有任何有效克数时返回 None。"""
+    if not isinstance(job, dict):
+        return None
+    vals = [parse_float(r.get("grams")) for r in (job.get("usages") or [])]
+    valid = [v for v in vals if v is not None]
+    return round(sum(valid), 2) if valid else None
+
+
+def format_job_notify_lines(job):
+    """生成机器人推送用的用量与成本说明（Markdown 格式）。"""
+    if not isinstance(job, dict):
+        return ""
+    usages = job.get("usages") or []
+    total_g = job_total_grams(job)
+    src = job.get("usage_source") or usage_source_of(usages)
+    src_label = {"exact": "精确", "estimated": "估算", "mixed": "混合"}.get(src, "")
+    if total_g is not None:
+        prefix = "约 " if src == "estimated" else ""
+        suffix = f"（{src_label}）" if src_label else ""
+        g_line = f"\n\n**用量**：{prefix}{total_g:.2f} g{suffix}"
+    else:
+        g_line = "\n\n**用量**：未知"
+
+    details = []
+    for row in usages:
+        mat = str(row.get("material") or "").strip()
+        color = str(row.get("color") or "").strip()
+        label = f"{mat} {color}".strip() or str(row.get("slot") or "").strip()
+        g = parse_float(row.get("grams"))
+        if label and g is not None:
+            details.append(f"{label} {g:.2f}g")
+        elif label:
+            details.append(label)
+    fil_line = f"\n\n**耗材**：{'、'.join(details)}" if details else ""
+
+    cost_parts = []
+    mat_cost = parse_float(job.get("material_cost"))
+    elec_cost = parse_float(job.get("electricity_cost"))
+    labor_cost = parse_float(job.get("labor_cost"))
+    if mat_cost is not None:
+        total_cost = mat_cost + (elec_cost or 0.0) + (labor_cost or 0.0)
+        cost_parts.append(f"¥{total_cost:.2f}")
+    elif parse_float(job.get("partial_cost")) and parse_float(job.get("partial_cost")) > 0:
+        partial = parse_float(job.get("partial_cost")) + (elec_cost or 0.0) + (labor_cost or 0.0)
+        cost_parts.append(f"约 ¥{partial:.2f}（部分耗材未设单价）")
+    cost_line = f"\n\n**成本**：{cost_parts[0]}" if cost_parts else ""
+
+    return f"{g_line}{fil_line}{cost_line}"

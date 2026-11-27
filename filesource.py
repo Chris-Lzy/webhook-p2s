@@ -304,19 +304,49 @@ def parse_slice_info_xml(blob, plate=""):
         if _tag(node) != "plate":
             continue
         index = ""
+        plate_weight = None
         filaments = []
         for child in list(node):
-            if _tag(child) == "metadata" and child.attrib.get("key") == "index":
-                index = str(child.attrib.get("value") or "").strip()
+            if _tag(child) == "metadata":
+                key = str(child.attrib.get("key") or "").strip().lower()
+                val = str(child.attrib.get("value") or "").strip()
+                if key == "index":
+                    index = val
+                elif key in ("weight", "filament_used_g", "total_weight") and plate_weight is None:
+                    plate_weight = _first_float({"v": val}, ("v",))
             if _tag(child) == "filament":
                 filaments.append(_filament_from_attrib(child.attrib))
-        plates.append((index, filaments))
+        plates.append((index, [item for item in filaments if item], plate_weight))
+
+    def _finalize(filaments, plate_weight):
+        if filaments:
+            missing_g = [item for item in filaments if item.get("used_g") is None or item.get("used_g") == 0]
+            if plate_weight and plate_weight > 0 and len(missing_g) == len(filaments):
+                if len(filaments) == 1:
+                    filaments[0]["used_g"] = plate_weight
+                else:
+                    total_m = sum(item.get("used_m") or 0.0 for item in filaments)
+                    if total_m > 0:
+                        for item in filaments:
+                            item["used_g"] = round(plate_weight * ((item.get("used_m") or 0.0) / total_m), 4)
+            return filaments
+        if plate_weight and plate_weight > 0:
+            return [{
+                "material": "",
+                "color": "",
+                "used_g": plate_weight,
+                "used_m": None,
+                "tray_info_idx": "",
+                "filament_id": "1",
+            }]
+        return []
+
     if plate:
-        for index, filaments in plates:
+        for index, filaments, plate_weight in plates:
             if index == str(plate):
-                return [item for item in filaments if item]
-    for _index, filaments in plates:
-        kept = [item for item in filaments if item]
+                return _finalize(filaments, plate_weight)
+    for _index, filaments, plate_weight in plates:
+        kept = _finalize(filaments, plate_weight)
         if kept:
             return kept
     return []

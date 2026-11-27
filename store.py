@@ -398,19 +398,48 @@ class Store:
                 return None
             job = _row(self.conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
             existing = self._usage_rows(job_id)
-            if not any(row["source"] == "exact" for row in existing):
-                baselines = self._baseline_slots(job_id)
-                estimated = select_estimated_usage(baselines, after_slots or [], active_slot or job.get("active_slot"))
-                self._replace_usage(job_id, estimated)
-            end_ts = time.time()
-            duration = None
-            if job.get("start_ts"):
-                duration = max(0.0, end_ts - float(job["start_ts"]))
             mapped = {
                 "finished": "finished",
                 "failed": "failed",
                 "cancelled": "cancelled",
             }.get(state, state or "finished")
+            has_exact = any(row["source"] == "exact" for row in existing)
+            if not has_exact:
+                baselines = self._baseline_slots(job_id)
+                estimated = select_estimated_usage(baselines, after_slots or [], active_slot or job.get("active_slot"))
+                self._replace_usage(job_id, estimated)
+            elif mapped in ("failed", "cancelled"):
+                # 失败/取消任务不能按整盘切片重量记账：优先用实测余量差，否则按完成百分比折算。
+                baselines = self._baseline_slots(job_id)
+                estimated = select_estimated_usage(baselines, after_slots or [], active_slot or job.get("active_slot"))
+                if any((row.get("grams") or 0) > 0 for row in estimated):
+                    self._replace_usage(job_id, estimated)
+                else:
+                    pct = parse_float(job.get("percent"))
+                    ratio = max(0.0, min(1.0, pct / 100.0)) if pct is not None and pct > 0 else 0.0
+                    scaled = []
+                    for row in existing:
+                        g = parse_float(row.get("grams"))
+                        m = parse_float(row.get("meters"))
+                        scaled.append({
+                            "slot": row.get("slot") or "",
+                            "spool_id": row.get("spool_id"),
+                            "tag_uid": row.get("tag_uid") or "",
+                            "tray_uuid": row.get("tray_uuid") or "",
+                            "material": row.get("material") or "",
+                            "color": row.get("color") or "",
+                            "grams": round(g * ratio, 4) if g is not None else None,
+                            "meters": round(m * ratio, 4) if m is not None else None,
+                            "source": "estimated" if g is not None else "unknown",
+                            "remain_before": row.get("remain_before"),
+                            "remain_after": row.get("remain_after"),
+                            "tray_weight_g": row.get("tray_weight_g"),
+                        })
+                    self._replace_usage(job_id, scaled)
+            end_ts = time.time()
+            duration = None
+            if job.get("start_ts"):
+                duration = max(0.0, end_ts - float(job["start_ts"]))
             self.conn.execute(
                 """UPDATE jobs SET state=?, end_ts=?, duration_sec=?, electricity_rate=?, labor_rate=?,
                    active_slot=COALESCE(NULLIF(?, ''), active_slot), updated_at=? WHERE id=?""",

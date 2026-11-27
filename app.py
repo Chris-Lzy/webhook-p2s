@@ -25,7 +25,8 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 
-from filament import SlotTracker, active_slot_key, parse_slots
+import bambu_cloud
+from filament import SlotTracker, active_slot_key, format_job_notify_lines, parse_slots
 from filesource import capture_camera_still, fetch_print_metadata
 from store import Store
 
@@ -82,6 +83,11 @@ DEFAULT_CONFIG = {
         "labor_per_hour": None,
         "image_max_age_days": 90,
         "image_max_count": 400,
+    },
+    "cloud": {
+        "enabled": False,
+        "region": "cn",
+        "token": "",
     },
 }
 
@@ -325,7 +331,7 @@ def load_config():
         log.warning("读取配置失败: %s", e)
         return
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
-    for sec in ("dingtalk", "wecom", "feishu", "notify", "camera", "filament"):
+    for sec in ("dingtalk", "wecom", "feishu", "notify", "camera", "filament", "cloud"):
         if isinstance(saved.get(sec), dict):
             deep_merge(cfg[sec], saved[sec])
     items = saved.get("printers")
@@ -807,6 +813,16 @@ def filament_settings():
     return raw
 
 
+def cloud_settings():
+    with lock:
+        raw = dict(config.get("cloud") or {})
+    return {
+        "enabled": bool(raw.get("enabled", False)),
+        "region": str(raw.get("region") or "cn").strip().lower() or "cn",
+        "token": str(raw.get("token") or "").strip(),
+    }
+
+
 def _tracker_for(pid):
     with _tracker_guard:
         tracker = _trackers.get(pid)
@@ -917,10 +933,43 @@ def touch_job_archive(pid):
     return job_id
 
 
+def _enrich_job_from_cloud(pid, job_id, task_name="", start_ts=None, end_ts=None, window=1800):
+    cloud = cloud_settings()
+    if not (cloud["enabled"] and cloud["token"]):
+        return False, "cloud_disabled"
+    info = pcfg_by_id(pid)
+    store = get_store()
+    job = store.get_job(job_id) or {}
+    name = str(task_name or job.get("task_name") or "").strip()
+    s_ts = start_ts if start_ts is not None else job.get("start_ts")
+    e_ts = end_ts if end_ts is not None else job.get("end_ts")
+    try:
+        _task, filaments, cover, cover_ext, reason = bambu_cloud.lookup_job_metadata(
+            cloud["region"], cloud["token"], info.get("sn") or "",
+            s_ts, e_ts, name, window=window, want_cover=True,
+        )
+    except bambu_cloud.CloudAuthError as exc:
+        add_event("error", f"{info.get('name') or pid} 拓竹云端认证失败: {exc}")
+        return False, "cloud_auth_error"
+    except Exception as exc:
+        log.info("%s 拓竹云端查询失败: %s", info.get("name") or pid, exc)
+        return False, "cloud_error"
+    if not filaments and not cover:
+        return False, reason
+    slots, _active = _current_slots(pid)
+    store.apply_file_fetch(job_id, filaments, cover, cover_ext, reason, slots)
+    return bool(filaments), reason
+
+
 def finish_job_archive(pid, state):
     store = get_store()
-    if not store.open_job_id(pid):
-        begin_job_archive(pid, incomplete=True)
+    job_id = store.open_job_id(pid)
+    if not job_id:
+        job_id = begin_job_archive(pid, incomplete=True)
+    if state == "finished" and job_id:
+        cur_job = store.get_job(job_id)
+        if cur_job and cur_job.get("usage_source") != "exact":
+            _enrich_job_from_cloud(pid, job_id, end_ts=time.time(), window=3600)
     slots, active = _current_slots(pid)
     settings = filament_settings()
     job = store.close_job(
@@ -940,18 +989,31 @@ def _enrich_job(pid, job_id, gcode_file, task_name):
     try:
         info = pcfg_by_id(pid)
         store = get_store()
-        try:
-            fetched = fetch_print_metadata(
-                info.get("host") or "", info.get("access_code") or "",
-                gcode_file=gcode_file, task_name=task_name,
-            )
-            slots, _active = _current_slots(pid)
-            store.apply_file_fetch(
-                job_id, fetched.filaments, fetched.preview, fetched.preview_ext, fetched.reason, slots,
-            )
-        except Exception:
-            log.info("%s 打印文件归档失败", info.get("name") or pid)
-            store.mark_file(job_id, "error")
+        cloud_ok = False
+        cloud = cloud_settings()
+        if cloud["enabled"] and cloud["token"]:
+            for delay in (0, 5, 10):
+                if delay:
+                    time.sleep(delay)
+                ok, reason = _enrich_job_from_cloud(pid, job_id, task_name=task_name, window=3600)
+                if ok:
+                    cloud_ok = True
+                    break
+                if reason == "cloud_auth_error":
+                    break
+        if not cloud_ok:
+            try:
+                fetched = fetch_print_metadata(
+                    info.get("host") or "", info.get("access_code") or "",
+                    gcode_file=gcode_file, task_name=task_name,
+                )
+                slots, _active = _current_slots(pid)
+                store.apply_file_fetch(
+                    job_id, fetched.filaments, fetched.preview, fetched.preview_ext, fetched.reason, slots,
+                )
+            except Exception:
+                log.info("%s 打印文件归档失败", info.get("name") or pid)
+                store.mark_file(job_id, "error")
         _enrich_camera(pid, job_id)
         settings = filament_settings()
         store.prune_images(settings.get("image_max_age_days"), settings.get("image_max_count"))
@@ -1180,12 +1242,14 @@ class PrinterMonitor:
                 if start_ts is not None:
                     mins = max(0, int((time.time() - start_ts) // 60))
                     dur = f"\n\n**耗时**：{fmt_minutes(mins) or '0分钟'}"
+                job = None
                 try:
-                    finish_job_archive(self.pid, "finished")
+                    job = finish_job_archive(self.pid, "finished")
                 except Exception:
                     log.warning("%s 结束任务归档失败", name)
                 if n.get("on_finish"):
-                    notify(name, "打印完成", f"**任务**：{task_name()}{dur}",
+                    weight_info = format_job_notify_lines(job)
+                    notify(name, "打印完成", f"**任务**：{task_name()}{dur}{weight_info}",
                            tag="finish", event="finish", with_media=True, printer_id=self.pid)
             elif gs == "FAILED":
                 with lock:
@@ -1193,12 +1257,14 @@ class PrinterMonitor:
                     s["print_start_ts"] = None
                     s["percent"] = 0
                     s["remaining_time"] = None
+                job = None
                 try:
-                    finish_job_archive(self.pid, "failed")
+                    job = finish_job_archive(self.pid, "failed")
                 except Exception:
                     log.warning("%s 结束任务归档失败", name)
                 if n.get("on_failed"):
-                    notify(name, "打印失败", f"**任务**：{task_name()}\n\n**错误码**：{err or '未知'}",
+                    weight_info = format_job_notify_lines(job)
+                    notify(name, "打印失败", f"**任务**：{task_name()}\n\n**错误码**：{err or '未知'}{weight_info}",
                            tag="fail", event="failed", with_media=True, printer_id=self.pid)
             elif gs == "PAUSED" and prev != "PAUSED" and n.get("on_pause"):
                 notify(name, "打印已暂停", f"**任务**：{task_name()}{speed_line}{time_line}",
@@ -1471,6 +1537,13 @@ def api_get_config():
         "notify": cfg["notify"],
         "camera": cfg["camera"],
         "filament": cfg.get("filament") or {},
+        "cloud": {
+            "enabled": bool((cfg.get("cloud") or {}).get("enabled", False)),
+            "region": str((cfg.get("cloud") or {}).get("region") or "cn"),
+            "token": "",
+            "token_set": bool(str((cfg.get("cloud") or {}).get("token") or "").strip()),
+            "token_expiry": bambu_cloud.jwt_expiry((cfg.get("cloud") or {}).get("token")),
+        },
         "version": __version__,
         "timezone": server_tz_label(),
         "local_subnet": auto_subnet,
@@ -1607,6 +1680,21 @@ async def api_post_config(req: Request):
                 cur_f[key] = max(0, min(hi, int(float(fil[key]))))
             except (TypeError, ValueError):
                 pass
+
+    cl = body.get("cloud")
+    if isinstance(cl, dict):
+        cur_c = cur.setdefault("cloud", json.loads(json.dumps(DEFAULT_CONFIG["cloud"])))
+        if "enabled" in cl:
+            cur_c["enabled"] = bool(cl["enabled"])
+        if "region" in cl:
+            reg = str(cl["region"] or "cn").strip().lower()
+            cur_c["region"] = reg if reg in bambu_cloud.BASES else "cn"
+        if cl.get("clear_token"):
+            cur_c["token"] = ""
+        elif str(cl.get("token", "")).strip():
+            cur_c["token"] = str(cl["token"]).strip()
+            if "enabled" not in cl:
+                cur_c["enabled"] = True
 
     with lock:
         config = cur
@@ -2006,6 +2094,86 @@ def api_reports():
 @app.get("/api/trace")
 def api_trace(task_name: str = "", spool_id: int = 0):
     return get_store().trace(task_name=task_name, spool_id=spool_id or None)
+
+
+def _save_cloud_token(region, token):
+    global config
+    with lock:
+        cur = json.loads(json.dumps(config))
+        cur_c = cur.setdefault("cloud", json.loads(json.dumps(DEFAULT_CONFIG["cloud"])))
+        cur_c["region"] = region if region in bambu_cloud.BASES else "cn"
+        cur_c["token"] = str(token).strip()
+        cur_c["enabled"] = True
+        config = cur
+        save_config()
+
+
+@app.post("/api/cloud/login")
+async def api_cloud_login(req: Request):
+    body = await req.json()
+    region = str(body.get("region") or cloud_settings()["region"] or "cn").strip().lower()
+    account = str(body.get("account") or "").strip()
+    password = str(body.get("password") or "")
+    code = str(body.get("code") or "").strip()
+    if not account:
+        return {"ok": False, "msg": "请填写拓竹账号（邮箱）"}
+    try:
+        if code:
+            token = bambu_cloud.login_with_code(region, account, code)
+            _save_cloud_token(region, token)
+            return {"ok": True, "msg": "登录成功并已保存令牌", "token_expiry": bambu_cloud.jwt_expiry(token)}
+        if not password:
+            return {"ok": False, "msg": "请填写密码"}
+        res = bambu_cloud.login(region, account, password)
+        if res.get("need_code"):
+            bambu_cloud.send_code(region, account)
+            return {"ok": True, "need_code": True, "msg": "已向邮箱发送验证码，请填入后再次提交"}
+        token = res["token"]
+        _save_cloud_token(region, token)
+        return {"ok": True, "msg": "登录成功并已保存令牌", "token_expiry": bambu_cloud.jwt_expiry(token)}
+    except bambu_cloud.CloudError as exc:
+        return {"ok": False, "msg": str(exc)}
+
+
+@app.post("/api/cloud/test")
+async def api_cloud_test(req: Request):
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    cur = cloud_settings()
+    region = str(body.get("region") or cur["region"] or "cn").strip().lower()
+    token = str(body.get("token") or "").strip() or cur["token"]
+    if not token:
+        return {"ok": False, "msg": "尚未配置拓竹云端令牌"}
+    try:
+        tasks = bambu_cloud.list_tasks(region, token, limit=5)
+        recent = [
+            {"title": t["title"] or t["design_title"], "weight": t["weight"], "device_id": t["device_id"]}
+            for t in tasks[:5]
+        ]
+        return {"ok": True, "msg": f"连接成功，最近读取到 {len(tasks)} 条云端任务", "tasks": recent}
+    except bambu_cloud.CloudError as exc:
+        return {"ok": False, "msg": str(exc)}
+
+
+@app.post("/api/jobs/{job_id}/refresh-cloud")
+def api_job_refresh_cloud(job_id: int):
+    store = get_store()
+    job = store.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    ok, reason = _enrich_job_from_cloud(
+        job["printer_id"], job_id, task_name=job.get("task_name") or "",
+        start_ts=job.get("start_ts"), end_ts=job.get("end_ts"), window=7200,
+    )
+    if not ok:
+        return {"ok": False, "msg": f"未从云端获取到重量（{reason}）"}
+    settings = filament_settings()
+    updated = store.recompute_job(
+        job_id, settings.get("electricity_per_hour"), settings.get("labor_per_hour"),
+    )
+    return {"ok": True, "job": updated}
 
 
 if __name__ == "__main__":
